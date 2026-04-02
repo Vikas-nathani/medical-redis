@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
-import json
-
+from api.exceptions import handle_redis_error
+from core.logging import get_logger
 from db.connection import get_redis_client
 from models.consultation import Consultation
 from pipeline.write import complaint_list_key, consultation_key, global_zset_key, patient_key
+
+
+logger = get_logger(__name__)
 
 
 def _decode_consultation(data: dict[str, str]) -> dict[str, object]:
@@ -30,52 +33,103 @@ def _decode_consultation(data: dict[str, str]) -> dict[str, object]:
 
 
 def get_patient(patient_id: str) -> dict[str, str] | None:
-	client = get_redis_client()
-	patient_data = client.hgetall(patient_key(patient_id))
-	return patient_data or None
+	try:
+		client = get_redis_client()
+		patient_data = client.hgetall(patient_key(patient_id))
+		return patient_data or None
+	except Exception as exc:
+		handle_redis_error(exc, "get_patient")
+		raise
 
 
-def get_all_consultations(patient_id: str) -> list[dict[str, object]]:
-	client = get_redis_client()
-	consultation_ids = client.zrevrange(global_zset_key(patient_id), 0, -1)
-	results: list[dict[str, object]] = []
-	for consultation_id in consultation_ids:
-		consultation_data = client.hgetall(consultation_key(patient_id, consultation_id))
-		if consultation_data:
-			results.append(_decode_consultation(consultation_data))
-	return results
+def get_all_consultations(patient_id: str, limit: int = 20, offset: int = 0) -> tuple[list[dict[str, object]], int]:
+	try:
+		client = get_redis_client()
+		zkey = global_zset_key(patient_id)
+		total_count = client.zcard(zkey)
+		end = offset + limit - 1
+		consultation_ids = client.zrevrange(zkey, offset, end)
+		results: list[dict[str, object]] = []
+		for consultation_id in consultation_ids:
+			consultation_data = client.hgetall(consultation_key(patient_id, consultation_id))
+			if consultation_data:
+				results.append(_decode_consultation(consultation_data))
+		logger.info(
+			"consultation_list_read",
+			extra={"operation": "consultation_list_read", "patient_id": patient_id},
+		)
+		return results, total_count
+	except Exception as exc:
+		handle_redis_error(exc, "get_all_consultations")
+		raise
 
 
-def get_complaint_chain(patient_id: str, complaint_slug: str) -> list[dict[str, object]]:
-	client = get_redis_client()
-	consultation_ids = client.lrange(complaint_list_key(patient_id, complaint_slug), 0, -1)
-	results: list[dict[str, object]] = []
-	for consultation_id in consultation_ids:
-		consultation_data = client.hgetall(consultation_key(patient_id, consultation_id))
-		if consultation_data:
-			results.append(_decode_consultation(consultation_data))
-	return results
+def get_complaint_chain(
+	patient_id: str,
+	complaint_slug: str,
+	limit: int = 20,
+	offset: int = 0,
+) -> tuple[list[dict[str, object]], int]:
+	try:
+		client = get_redis_client()
+		list_key = complaint_list_key(patient_id, complaint_slug)
+		total_count = client.llen(list_key)
+		end = offset + limit - 1
+		consultation_ids = client.lrange(list_key, offset, end)
+		results: list[dict[str, object]] = []
+		for consultation_id in consultation_ids:
+			consultation_data = client.hgetall(consultation_key(patient_id, consultation_id))
+			if consultation_data:
+				results.append(_decode_consultation(consultation_data))
+		logger.info(
+			"complaint_chain_read",
+			extra={"operation": "complaint_chain_read", "patient_id": patient_id},
+		)
+		return results, total_count
+	except Exception as exc:
+		handle_redis_error(exc, "get_complaint_chain")
+		raise
 
 
 def get_latest_consultation(patient_id: str, complaint_slug: str) -> dict[str, object] | None:
-	client = get_redis_client()
-	latest_consultation_id = client.lindex(complaint_list_key(patient_id, complaint_slug), -1)
-	if not latest_consultation_id:
-		return None
-	consultation_data = client.hgetall(consultation_key(patient_id, latest_consultation_id))
-	if not consultation_data:
-		return None
-	return _decode_consultation(consultation_data)
+	try:
+		client = get_redis_client()
+		latest_consultation_id = client.lindex(complaint_list_key(patient_id, complaint_slug), -1)
+		if not latest_consultation_id:
+			return None
+		consultation_data = client.hgetall(consultation_key(patient_id, latest_consultation_id))
+		if not consultation_data:
+			return None
+		logger.info(
+			"latest_consultation_read",
+			extra={
+				"operation": "latest_consultation_read",
+				"patient_id": patient_id,
+				"consultation_id": latest_consultation_id,
+			},
+		)
+		return _decode_consultation(consultation_data)
+	except Exception as exc:
+		handle_redis_error(exc, "get_latest_consultation")
+		raise
 
 
 def get_consultation(patient_id: str, consultation_id: str) -> Consultation | None:
-	client = get_redis_client()
-	consultation_data = client.hgetall(consultation_key(patient_id, consultation_id))
-	if not consultation_data:
-		return None
-	return Consultation.from_redis_dict(consultation_data)
+	try:
+		client = get_redis_client()
+		consultation_data = client.hgetall(consultation_key(patient_id, consultation_id))
+		if not consultation_data:
+			return None
+		return Consultation.from_redis_dict(consultation_data)
+	except Exception as exc:
+		handle_redis_error(exc, "get_consultation")
+		raise
 
 
 def get_patient_consultations(patient_id: str) -> list[str]:
-	client = get_redis_client()
-	return client.zrange(global_zset_key(patient_id), 0, -1)
+	try:
+		client = get_redis_client()
+		return client.zrange(global_zset_key(patient_id), 0, -1)
+	except Exception as exc:
+		handle_redis_error(exc, "get_patient_consultations")
+		raise

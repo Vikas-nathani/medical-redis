@@ -93,7 +93,7 @@ def run() -> None:
 	write_consultation(fever_visit_2)
 
 	back_pain_visit_1 = Consultation(
-		consultation_id="cons_backpain_001",
+		consultation_id="",
 		patient_id=patient_id,
 		chief_complaint="Back pain",
 		complaint_slug="back-pain",
@@ -125,8 +125,8 @@ def run() -> None:
 	assert len(json.loads(follow_up_history)) == 1
 	assert json.loads(follow_up_history)[0]["consultation_id"] == "cons_fever_001"
 
-	backpain_one = client.hgetall(consultation_key(patient_id, "cons_backpain_001"))
-	assert backpain_one, "cons_backpain_001 should exist"
+	backpain_one = client.hgetall(consultation_key(patient_id, "cons_back-pain_001"))
+	assert backpain_one, "cons_back-pain_001 should exist"
 	assert json.loads(backpain_one["follow_up_history"]) == []
 
 	print("[test] all assertions passed")

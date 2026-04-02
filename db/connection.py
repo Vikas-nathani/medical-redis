@@ -1,33 +1,20 @@
-"""Redis connection factory with singleton behavior."""
+"""Redis connection factory with a shared module-level connection pool."""
 
 from __future__ import annotations
 
-from threading import Lock
-
-from redis import Redis
+from redis import ConnectionPool, Redis
 
 from config.settings import REDIS_DB, REDIS_HOST, REDIS_PORT
 
 
-_redis_client: Redis | None = None
-_client_lock = Lock()
+_pool = ConnectionPool(  # Share one pool across threads so each request gets a safe connection handle.
+	host=REDIS_HOST,
+	port=REDIS_PORT,
+	db=REDIS_DB,
+	decode_responses=True,
+	max_connections=20,
+)
 
 
 def get_redis_client() -> Redis:
-	global _redis_client
-
-	if _redis_client is not None:
-		return _redis_client
-
-	with _client_lock:
-		if _redis_client is None:
-			client = Redis(
-				host=REDIS_HOST,
-				port=REDIS_PORT,
-				db=REDIS_DB,
-				decode_responses=True,
-			)
-			client.ping()
-			_redis_client = client
-
-	return _redis_client
+	return Redis(connection_pool=_pool)  # Return a client bound to the shared pool instead of a singleton socket.

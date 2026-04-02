@@ -3,18 +3,19 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Query, status
 
+from api.exceptions import handle_redis_error
 from api.schemas import ConsultationCreateRequest, ConsultationListResponse, ConsultationResponse, MessageResponse
-from db.connection import get_redis_client
+from core.logging import get_logger
 from models.consultation import Consultation
 from pipeline.read import get_all_consultations, get_complaint_chain, get_latest_consultation, get_patient
-from pipeline.write import complaint_list_key, write_consultation
+from pipeline.write import write_consultation
 
 
 router = APIRouter(tags=["consultation"])
+logger = get_logger(__name__)
 
 
 def generate_slug(text: str) -> str:
@@ -34,10 +35,6 @@ def generate_slug(text: str) -> str:
 	return text.strip("-")
 
 
-def _utc_now_iso() -> str:
-	return datetime.now(timezone.utc).isoformat()
-
-
 def _to_response(payload: dict[str, object]) -> ConsultationResponse:
 	return ConsultationResponse(**payload)
 
@@ -45,70 +42,103 @@ def _to_response(payload: dict[str, object]) -> ConsultationResponse:
 @router.post("/consultation", response_model=MessageResponse, status_code=status.HTTP_201_CREATED)
 def create_consultation(request: ConsultationCreateRequest) -> MessageResponse:
 	"""Create a consultation and append it to the appropriate complaint chain."""
-	if not get_patient(request.patient_id):
-		raise HTTPException(
-			status_code=status.HTTP_404_NOT_FOUND,
-			detail=f"Patient {request.patient_id} not found. Create the patient first.",
+	try:
+		if not get_patient(request.patient_id):
+			raise HTTPException(
+				status_code=status.HTTP_404_NOT_FOUND,
+				detail=f"Patient {request.patient_id} not found. Create the patient first.",
+			)
+
+		complaint_slug = generate_slug(request.chief_complaint)
+		if complaint_slug == "" or re.fullmatch(r"[-_]+", complaint_slug):
+			raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="chief_complaint produced an invalid slug")
+
+		logger.info(
+			"consultation_slug_generated",
+			extra={
+				"operation": "consultation_write",
+				"patient_id": request.patient_id,
+				"consultation_id": "",
+				"complaint_slug": complaint_slug,
+			},
 		)
 
-	complaint_slug = generate_slug(request.chief_complaint)
-	print(
-		f"[consultation] generated slug '{complaint_slug}' "
-		f"from chief_complaint '{request.chief_complaint}'"
-	)
-
-	client = get_redis_client()
-	current_visits = client.llen(complaint_list_key(request.patient_id, complaint_slug))
-	next_visit_number = current_visits + 1
-	consultation_id = f"cons_{complaint_slug}_{next_visit_number:03d}"
-	visit_date = request.visit_date or _utc_now_iso()
-
-	consultation = Consultation(
-		consultation_id=consultation_id,
-		patient_id=request.patient_id,
-		chief_complaint=request.chief_complaint,
-		complaint_slug=complaint_slug,
-		visit_number=next_visit_number,
-		visit_date=visit_date,
-		doctor_id=request.doctor_id,
-		questions=request.questions,
-		symptoms_observed=request.symptoms_observed,
-		medications=request.medications,
-		follow_up_date=request.follow_up_date,
-		follow_up_instruction=request.follow_up_instruction,
-		prev_consultation_id="",
-		follow_up_history=[],
-	)
-	write_consultation(consultation)
-	return MessageResponse(message=f"Consultation {consultation_id} stored for patient {request.patient_id}")
+		consultation = Consultation(
+			consultation_id="",
+			patient_id=request.patient_id,
+			chief_complaint=request.chief_complaint,
+			complaint_slug=complaint_slug,
+			visit_number=0,
+			visit_date=request.visit_date,
+			doctor_id=request.doctor_id,
+			questions=request.questions,
+			symptoms_observed=request.symptoms_observed,
+			medications=request.medications,
+			follow_up_date=request.follow_up_date,
+			follow_up_instruction=request.follow_up_instruction,
+			prev_consultation_id="",
+			follow_up_history=[],
+		)
+		consultation_id = write_consultation(consultation)
+		return MessageResponse(message=f"Consultation {consultation_id} stored for patient {request.patient_id}")
+	except HTTPException:
+		raise
+	except Exception as exc:
+		handle_redis_error(exc, "create_consultation")
+		raise
 
 
 @router.get("/patient/{patient_id}/consultations", response_model=ConsultationListResponse)
-def read_all_consultations(patient_id: str) -> ConsultationListResponse:
+def read_all_consultations(
+	patient_id: str,
+	limit: int = Query(default=20, ge=1),
+	offset: int = Query(default=0, ge=0),
+) -> ConsultationListResponse:
 	"""Fetch all consultations for a patient, newest first."""
-	if not get_patient(patient_id):
-		raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Patient not found")
-	consultations = [
-		_to_response(consultation).model_dump()
-		for consultation in get_all_consultations(patient_id)
-	]
-	return ConsultationListResponse(consultations=consultations)
+	try:
+		if not get_patient(patient_id):
+			raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Patient not found")
+		consultations_raw, total_count = get_all_consultations(patient_id, limit=limit, offset=offset)
+		consultations = [_to_response(consultation).model_dump() for consultation in consultations_raw]
+		return ConsultationListResponse(consultations=consultations, total_count=total_count)
+	except HTTPException:
+		raise
+	except Exception as exc:
+		handle_redis_error(exc, "read_all_consultations")
+		raise
 
 
 @router.get("/patient/{patient_id}/complaint/{complaint_slug}", response_model=ConsultationListResponse)
-def read_complaint_chain(patient_id: str, complaint_slug: str) -> ConsultationListResponse:
+def read_complaint_chain(
+	patient_id: str,
+	complaint_slug: str,
+	limit: int = Query(default=20, ge=1),
+	offset: int = Query(default=0, ge=0),
+) -> ConsultationListResponse:
 	"""Fetch a specific complaint chain in visit order, oldest first."""
-	consultations_raw = get_complaint_chain(patient_id, complaint_slug)
-	if not consultations_raw:
-		raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"No visits found for complaint {complaint_slug}")
-	consultations = [_to_response(consultation).model_dump() for consultation in consultations_raw]
-	return ConsultationListResponse(consultations=consultations)
+	try:
+		consultations_raw, total_count = get_complaint_chain(patient_id, complaint_slug, limit=limit, offset=offset)
+		if not consultations_raw:
+			raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"No visits found for complaint {complaint_slug}")
+		consultations = [_to_response(consultation).model_dump() for consultation in consultations_raw]
+		return ConsultationListResponse(consultations=consultations, total_count=total_count)
+	except HTTPException:
+		raise
+	except Exception as exc:
+		handle_redis_error(exc, "read_complaint_chain")
+		raise
 
 
 @router.get("/patient/{patient_id}/complaint/{complaint_slug}/latest", response_model=ConsultationResponse)
 def read_latest_consultation(patient_id: str, complaint_slug: str) -> ConsultationResponse:
 	"""Fetch the latest consultation for a complaint chain for RAG chunking."""
-	consultation = get_latest_consultation(patient_id, complaint_slug)
-	if not consultation:
-		raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"No visits found for complaint {complaint_slug}")
-	return ConsultationResponse(**consultation)
+	try:
+		consultation = get_latest_consultation(patient_id, complaint_slug)
+		if not consultation:
+			raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"No visits found for complaint {complaint_slug}")
+		return ConsultationResponse(**consultation)
+	except HTTPException:
+		raise
+	except Exception as exc:
+		handle_redis_error(exc, "read_latest_consultation")
+		raise
