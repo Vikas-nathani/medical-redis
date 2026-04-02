@@ -1,0 +1,1 @@
+"""API package for the Medical Consultation service."""
