@@ -108,18 +108,22 @@ def read_all_consultations(
 		raise
 
 
-@router.get("/patient/{patient_id}/complaint/{complaint_slug}", response_model=ConsultationListResponse)
+@router.get("/patient/{patient_id}/complaint", response_model=ConsultationListResponse)
 def read_complaint_chain(
 	patient_id: str,
-	complaint_slug: str,
+	complaint: str = Query(..., min_length=3),
 	limit: int = Query(default=20, ge=1),
 	offset: int = Query(default=0, ge=0),
 ) -> ConsultationListResponse:
 	"""Fetch a specific complaint chain in visit order, oldest first."""
 	try:
+		complaint_slug = generate_slug(complaint)
+		if not complaint_slug:
+			raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Complaint text produces an invalid slug")
+
 		consultations_raw, total_count = get_complaint_chain(patient_id, complaint_slug, limit=limit, offset=offset)
 		if not consultations_raw:
-			raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"No visits found for complaint {complaint_slug}")
+			raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"No consultations found for complaint: {complaint}")
 		consultations = [_to_response(consultation).model_dump() for consultation in consultations_raw]
 		return ConsultationListResponse(consultations=consultations, total_count=total_count)
 	except HTTPException:
@@ -129,13 +133,20 @@ def read_complaint_chain(
 		raise
 
 
-@router.get("/patient/{patient_id}/complaint/{complaint_slug}/latest", response_model=ConsultationResponse)
-def read_latest_consultation(patient_id: str, complaint_slug: str) -> ConsultationResponse:
+@router.get("/patient/{patient_id}/complaint/latest", response_model=ConsultationResponse)
+def read_latest_consultation(
+	patient_id: str,
+	complaint: str = Query(..., min_length=3),
+) -> ConsultationResponse:
 	"""Fetch the latest consultation for a complaint chain for RAG chunking."""
 	try:
+		complaint_slug = generate_slug(complaint)
+		if not complaint_slug:
+			raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Complaint text produces an invalid slug")
+
 		consultation = get_latest_consultation(patient_id, complaint_slug)
 		if not consultation:
-			raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"No visits found for complaint {complaint_slug}")
+			raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"No consultations found for complaint: {complaint}")
 		return ConsultationResponse(**consultation)
 	except HTTPException:
 		raise
