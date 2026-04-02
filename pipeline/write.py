@@ -202,3 +202,22 @@ def write_consultation(consultation: Consultation) -> str:
 	except Exception as exc:
 		handle_redis_error(exc, "write_consultation")  # Surface Redis-side failures as HTTP errors instead of generic 500s.
 		raise
+
+
+def get_idempotency_consultation_id(idempotency_key: str) -> str | None:
+	try:
+		client = get_redis_client()
+		value = client.get(f"idempotency:{idempotency_key}")
+		return str(value) if value else None
+	except Exception as exc:
+		handle_redis_error(exc, "get_idempotency_consultation_id")
+		raise
+
+
+def set_idempotency_consultation_id(idempotency_key: str, consultation_id: str, ttl_seconds: int = 86400) -> None:
+	try:
+		client = get_redis_client()
+		client.set(f"idempotency:{idempotency_key}", consultation_id, ex=ttl_seconds)
+	except Exception as exc:
+		handle_redis_error(exc, "set_idempotency_consultation_id")
+		raise

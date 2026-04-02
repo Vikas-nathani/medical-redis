@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import re
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Header, HTTPException, Query, Response, status
 
 from api.exceptions import handle_redis_error
 from api.schemas import ConsultationCreateRequest, ConsultationListResponse, ConsultationResponse, MessageResponse
 from core.logging import get_logger
 from models.consultation import Consultation
 from pipeline.read import get_all_consultations, get_complaint_chain, get_latest_consultation, get_patient
-from pipeline.write import write_consultation
+from pipeline.write import get_idempotency_consultation_id, set_idempotency_consultation_id, write_consultation
 
 
 router = APIRouter(tags=["consultation"])
@@ -40,9 +40,21 @@ def _to_response(payload: dict[str, object]) -> ConsultationResponse:
 
 
 @router.post("/consultation", response_model=MessageResponse, status_code=status.HTTP_201_CREATED)
-def create_consultation(request: ConsultationCreateRequest) -> MessageResponse:
+def create_consultation(
+	request: ConsultationCreateRequest,
+	response: Response,
+	idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> MessageResponse:
 	"""Create a consultation and append it to the appropriate complaint chain."""
 	try:
+		if idempotency_key:
+			existing_consultation_id = get_idempotency_consultation_id(idempotency_key)
+			if existing_consultation_id:
+				response.status_code = status.HTTP_200_OK
+				return MessageResponse(
+					message=f"Consultation {existing_consultation_id} stored for patient {request.patient_id}"
+				)
+
 		if not get_patient(request.patient_id):
 			raise HTTPException(
 				status_code=status.HTTP_404_NOT_FOUND,
@@ -80,6 +92,8 @@ def create_consultation(request: ConsultationCreateRequest) -> MessageResponse:
 			follow_up_history=[],
 		)
 		consultation_id = write_consultation(consultation)
+		if idempotency_key:
+			set_idempotency_consultation_id(idempotency_key, consultation_id, ttl_seconds=86400)
 		return MessageResponse(message=f"Consultation {consultation_id} stored for patient {request.patient_id}")
 	except HTTPException:
 		raise

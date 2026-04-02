@@ -13,6 +13,9 @@ _pool = ConnectionPool(  # Share one pool across threads so each request gets a 
 	db=REDIS_DB,
 	decode_responses=True,
 	max_connections=20,
+	socket_timeout=5,
+	socket_connect_timeout=3,
+	retry_on_timeout=True,
 )
 
 
