@@ -22,6 +22,14 @@ def _load_json(raw: str | None, fallback):
 		return fallback
 
 
+def ensure_list(value):
+	if isinstance(value, list):
+		return value
+	if isinstance(value, dict) and len(value) == 0:
+		return []
+	return value if value else []
+
+
 def _decode_history_entry(entry: dict[str, object]) -> dict[str, object]:
 	decoded = dict(entry)
 
@@ -35,9 +43,11 @@ def _decode_history_entry(entry: dict[str, object]) -> dict[str, object]:
 	]:
 		value = decoded.get(list_field)
 		if isinstance(value, str):
-			decoded[list_field] = _load_json(value, [])
+			decoded[list_field] = ensure_list(_load_json(value, []))
 		elif value is None:
 			decoded[list_field] = []
+		else:
+			decoded[list_field] = ensure_list(value)
 
 	vitals_value = decoded.get("vitals")
 	if isinstance(vitals_value, str):
@@ -89,17 +99,17 @@ def _decode_consultation(data: dict[str, str]) -> dict[str, object]:
 		"doctor_id": data.get("doctor_id", ""),
 		"visit_date": data.get("visit_date", ""),
 		"visit_number": visit_number,
-		"chief_complaints": _load_json(data.get("chief_complaints"), []),
+		"chief_complaints": ensure_list(_load_json(data.get("chief_complaints", "[]") or "[]", [])),
 		"vitals": _load_json(data.get("vitals"), None),
-		"key_questions": _load_json(data.get("key_questions"), []),
+		"key_questions": ensure_list(_load_json(data.get("key_questions", "[]") or "[]", [])),
 		"key_questions_ai_notes": data.get("key_questions_ai_notes", ""),
-		"diagnoses": _load_json(data.get("diagnoses"), []),
+		"diagnoses": ensure_list(_load_json(data.get("diagnoses", "[]") or "[]", [])),
 		"diagnoses_ai_notes": data.get("diagnoses_ai_notes", ""),
-		"investigations": _load_json(data.get("investigations"), []),
+		"investigations": ensure_list(_load_json(data.get("investigations", "[]") or "[]", [])),
 		"investigations_ai_notes": data.get("investigations_ai_notes", ""),
-		"medications": _load_json(data.get("medications"), []),
+		"medications": ensure_list(_load_json(data.get("medications", "[]") or "[]", [])),
 		"medications_ai_notes": data.get("medications_ai_notes", ""),
-		"procedures": _load_json(data.get("procedures"), []),
+		"procedures": ensure_list(_load_json(data.get("procedures", "[]") or "[]", [])),
 		"procedures_ai_notes": data.get("procedures_ai_notes", ""),
 		"advice": data.get("advice", ""),
 		"follow_up_date": data.get("follow_up_date", ""),

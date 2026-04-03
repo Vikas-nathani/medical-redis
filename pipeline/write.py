@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import time
@@ -196,6 +197,40 @@ def generate_slug(text: str) -> str:
 	return text.strip("-")
 
 
+def generate_idempotency_key(patient_id: str, complaint_slug: str, visit_date: str, doctor_id: str) -> str:
+	raw = f"{patient_id}:{complaint_slug}:{visit_date}:{doctor_id}"
+	return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def safe_json_list(value) -> str:
+	if not value:
+		return "[]"
+	if isinstance(value, list):
+		return json.dumps(value)
+	return "[]"
+
+
+def normalize_history_entries_for_lists(history: list) -> list:
+	list_fields = ["investigations", "procedures", "medications", "diagnoses", "key_questions", "chief_complaints"]
+	normalized: list = []
+	for entry in history:
+		if not isinstance(entry, dict):
+			continue
+		snapshot = dict(entry)
+		for field in list_fields:
+			value = snapshot.get(field)
+			if isinstance(value, list):
+				snapshot[field] = value
+			elif isinstance(value, dict) and len(value) == 0:
+				snapshot[field] = []
+			elif not value:
+				snapshot[field] = []
+			else:
+				snapshot[field] = []
+		normalized.append(snapshot)
+	return normalized
+
+
 def write_patient(patient: Patient) -> None:
 	try:
 		client = get_redis_client()
@@ -230,6 +265,7 @@ def write_consultation(consultation: ConsultationModel) -> str:
 		timestamp_score = int(time.time() * 1_000_000)
 		created_at = date.today().isoformat()
 		visit_date = consultation.visit_date or ""
+		consultation.follow_up_history = normalize_history_entries_for_lists(consultation.follow_up_history or [])
 
 		result_raw = _atomic_write_script(
 			keys=[
@@ -241,17 +277,17 @@ def write_consultation(consultation: ConsultationModel) -> str:
 				complaint_slug,
 				consultation.doctor_id,
 				visit_date,
-				json.dumps(consultation.chief_complaints or []),
+				safe_json_list(consultation.chief_complaints),
 				json.dumps(consultation.vitals),
-				json.dumps(consultation.key_questions or []),
+				safe_json_list(consultation.key_questions),
 				consultation.key_questions_ai_notes or "",
-				json.dumps(consultation.diagnoses or []),
+				safe_json_list(consultation.diagnoses),
 				consultation.diagnoses_ai_notes or "",
-				json.dumps(consultation.investigations or []),
+				safe_json_list(consultation.investigations),
 				consultation.investigations_ai_notes or "",
-				json.dumps(consultation.medications or []),
+				safe_json_list(consultation.medications),
 				consultation.medications_ai_notes or "",
-				json.dumps(consultation.procedures or []),
+				safe_json_list(consultation.procedures),
 				consultation.procedures_ai_notes or "",
 				consultation.advice or "",
 				consultation.follow_up_date or "",
@@ -280,9 +316,10 @@ def write_consultation(consultation: ConsultationModel) -> str:
 		raise
 
 
-def get_idempotency_consultation_id(idempotency_key: str) -> str | None:
+def get_idempotency_consultation_id(patient_id: str, complaint_slug: str, visit_date: str, doctor_id: str) -> str | None:
 	try:
 		client = get_redis_client()
+		idempotency_key = generate_idempotency_key(patient_id, complaint_slug, visit_date, doctor_id)
 		value = client.get(f"idempotency:{idempotency_key}")
 		return str(value) if value else None
 	except Exception as exc:
@@ -290,10 +327,11 @@ def get_idempotency_consultation_id(idempotency_key: str) -> str | None:
 		raise
 
 
-def set_idempotency_consultation_id(idempotency_key: str, consultation_id: str, ttl_seconds: int = 86400) -> None:
+def set_idempotency_consultation_id(patient_id: str, complaint_slug: str, visit_date: str, doctor_id: str, consultation_id: str) -> None:
 	try:
 		client = get_redis_client()
-		client.set(f"idempotency:{idempotency_key}", consultation_id, ex=ttl_seconds)
+		idempotency_key = generate_idempotency_key(patient_id, complaint_slug, visit_date, doctor_id)
+		client.set(f"idempotency:{idempotency_key}", consultation_id)
 	except Exception as exc:
 		handle_redis_error(exc, "set_idempotency_consultation_id")
 		raise

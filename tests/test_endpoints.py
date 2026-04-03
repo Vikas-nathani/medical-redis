@@ -5,11 +5,8 @@ import uuid
 from fastapi.testclient import TestClient
 
 
-def _create_consultation(client: TestClient, payload: dict[str, object], idempotency_key: str | None = None):
-	headers = {"Content-Type": "application/json"}
-	if idempotency_key:
-		headers["Idempotency-Key"] = idempotency_key
-	return client.post("/api/v1/consultation", json=payload, headers=headers)
+def _create_consultation(client: TestClient, payload: dict[str, object]):
+	return client.post("/api/v1/consultation", json=payload, headers={"Content-Type": "application/json"})
 
 
 # Proves a new patient can be registered successfully and the response includes the patient ID.
@@ -108,10 +105,11 @@ def test_store_consultation_with_invalid_slug_from_bad_complaint_returns_422(cli
 	assert response.status_code == 422
 
 
-# Proves the same Idempotency-Key returns the same consultation ID on the second request.
-def test_post_consultation_with_same_idempotency_key_returns_same_consultation_id(client: TestClient, sample_consultation_payload: dict[str, object], unique_idempotency_key: str) -> None:
-	first_response = _create_consultation(client, sample_consultation_payload, unique_idempotency_key)
-	second_response = _create_consultation(client, sample_consultation_payload, unique_idempotency_key)
+
+# Proves backend-generated idempotency replays the same request body with HTTP 200 and same consultation ID.
+def test_post_same_consultation_twice_without_header_returns_200_and_same_consultation_id(client: TestClient, sample_consultation_payload: dict[str, object]) -> None:
+	first_response = _create_consultation(client, sample_consultation_payload)
+	second_response = _create_consultation(client, sample_consultation_payload)
 	first_id = first_response.json()["consultation_id"]
 	second_id = second_response.json()["consultation_id"]
 	assert first_response.status_code == 201
@@ -119,23 +117,26 @@ def test_post_consultation_with_same_idempotency_key_returns_same_consultation_i
 	assert first_id == second_id
 
 
-# Proves the second Idempotency-Key replay is served as a 200 response instead of a second create.
-def test_post_consultation_with_same_idempotency_key_returns_200_not_201_on_replay(client: TestClient, sample_consultation_payload: dict[str, object], unique_idempotency_key: str) -> None:
-	_ = _create_consultation(client, sample_consultation_payload, unique_idempotency_key)
-	response = _create_consultation(client, sample_consultation_payload, unique_idempotency_key)
-	assert response.status_code == 200
-
-
-# Proves consultation creation still works normally when no Idempotency-Key header is sent.
-def test_post_consultation_without_idempotency_key_returns_201(client: TestClient, sample_consultation_payload: dict[str, object]) -> None:
-	response = _create_consultation(client, sample_consultation_payload)
-	assert response.status_code == 201
+# Proves different visit_date values produce different backend idempotency keys and new consultations.
+def test_post_consultations_with_different_visit_dates_return_201_and_different_consultation_ids(client: TestClient, sample_consultation_payload: dict[str, object]) -> None:
+	first_payload = dict(sample_consultation_payload)
+	first_payload["visit_date"] = "2026-04-03"
+	second_payload = dict(sample_consultation_payload)
+	second_payload["visit_date"] = "2026-04-04"
+	first_response = _create_consultation(client, first_payload)
+	second_response = _create_consultation(client, second_payload)
+	assert first_response.status_code == 201
+	assert second_response.status_code == 201
+	assert first_response.json()["consultation_id"] != second_response.json()["consultation_id"]
 
 
 # Proves the all-consultations endpoint returns consultation objects for an existing patient.
 def test_get_all_consultations_returns_200_and_results_list(client: TestClient, sample_consultation_payload: dict[str, object]) -> None:
-	_ = _create_consultation(client, sample_consultation_payload)
+	first_payload = dict(sample_consultation_payload)
+	first_payload["visit_date"] = "2026-04-03"
+	_ = _create_consultation(client, first_payload)
 	second_payload = dict(sample_consultation_payload)
+	second_payload["visit_date"] = "2026-04-04"
 	second_payload["advice"] = "Continue hydration"
 	_ = _create_consultation(client, second_payload)
 	patient_id = sample_consultation_payload["patient_id"]
@@ -151,6 +152,7 @@ def test_get_all_consultations_with_pagination_limit_and_offset_work_correctly(c
 	created_ids: list[str] = []
 	for index in range(3):
 		payload = dict(sample_consultation_payload)
+		payload["visit_date"] = f"2026-04-0{index + 3}"
 		payload["advice_ai_notes"] = f"Advice note {index}"
 		response = _create_consultation(client, payload)
 		created_ids.append(response.json()["consultation_id"])
@@ -164,8 +166,11 @@ def test_get_all_consultations_with_pagination_limit_and_offset_work_correctly(c
 
 # Proves an existing complaint chain is returned in visit order with the correct records.
 def test_get_complaint_chain_for_existing_complaint_returns_200_and_correct_chain(client: TestClient, sample_consultation_payload: dict[str, object]) -> None:
-	first = _create_consultation(client, sample_consultation_payload)
+	first_payload = dict(sample_consultation_payload)
+	first_payload["visit_date"] = "2026-04-03"
+	first = _create_consultation(client, first_payload)
 	second_payload = dict(sample_consultation_payload)
+	second_payload["visit_date"] = "2026-04-04"
 	second_payload["advice"] = "Continue medication and hydrate well"
 	second = _create_consultation(client, second_payload)
 	patient_id = sample_consultation_payload["patient_id"]

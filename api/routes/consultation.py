@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Header, HTTPException, Query, Response, status
+from fastapi import APIRouter, HTTPException, Query, Response, status
 
 from api.exceptions import handle_redis_error
 from api.schemas import ConsultationRequest, ConsultationResponse
@@ -22,26 +22,31 @@ router = APIRouter(tags=["consultation"])
 logger = get_logger(__name__)
 
 
+def normalize_consultation_dict(d: dict) -> dict:
+	list_fields = ["key_questions", "diagnoses", "investigations", "medications", "procedures", "chief_complaints"]
+	for field in list_fields:
+		if not isinstance(d.get(field), list):
+			d[field] = []
+	history = d.get("follow_up_history", [])
+	if not isinstance(history, list):
+		history = []
+	for entry in history:
+		if not isinstance(entry, dict):
+			continue
+		for field in list_fields:
+			if not isinstance(entry.get(field), list):
+				entry[field] = []
+	d["follow_up_history"] = history
+	return d
+
+
 @router.post("/consultation", response_model=ConsultationResponse, status_code=status.HTTP_201_CREATED)
 def create_consultation(
 	request: ConsultationRequest,
 	response: Response,
-	idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> ConsultationResponse:
 	"""Create a consultation and append it to the appropriate complaint chain."""
 	try:
-		if idempotency_key:
-			existing_consultation_id = get_idempotency_consultation_id(idempotency_key)
-			if existing_consultation_id:
-				existing = get_consultation(request.patient_id, existing_consultation_id)
-				if not existing:
-					raise HTTPException(
-						status_code=status.HTTP_404_NOT_FOUND,
-						detail=f"Consultation {existing_consultation_id} not found for idempotency replay",
-					)
-				response.status_code = status.HTTP_200_OK
-				return ConsultationResponse(**existing)
-
 		if not get_patient(request.patient_id):
 			raise HTTPException(
 				status_code=status.HTTP_404_NOT_FOUND,
@@ -54,6 +59,24 @@ def create_consultation(
 				status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
 				detail="chief_complaints[0] produced an invalid slug",
 			)
+
+		visit_date = request.visit_date or ""
+		existing_consultation_id = get_idempotency_consultation_id(
+			request.patient_id,
+			complaint_slug,
+			visit_date,
+			request.doctor_id,
+		)
+		if existing_consultation_id:
+			existing = get_consultation(request.patient_id, existing_consultation_id)
+			if not existing:
+				raise HTTPException(
+					status_code=status.HTTP_404_NOT_FOUND,
+					detail=f"Consultation {existing_consultation_id} not found for idempotency replay",
+				)
+			existing = normalize_consultation_dict(existing)
+			response.status_code = status.HTTP_200_OK
+			return ConsultationResponse(**existing)
 
 		logger.info(
 			"consultation_slug_generated",
@@ -69,7 +92,7 @@ def create_consultation(
 			consultation_id="",
 			patient_id=request.patient_id,
 			doctor_id=request.doctor_id,
-			visit_date=request.visit_date or "",
+			visit_date=visit_date,
 			visit_number=0,
 			chief_complaints=request.chief_complaints,
 			vitals=request.vitals.model_dump() if request.vitals else None,
@@ -90,8 +113,13 @@ def create_consultation(
 		)
 
 		consultation_id = write_consultation(consultation)
-		if idempotency_key:
-			set_idempotency_consultation_id(idempotency_key, consultation_id, ttl_seconds=86400)
+		set_idempotency_consultation_id(
+			request.patient_id,
+			complaint_slug,
+			visit_date,
+			request.doctor_id,
+			consultation_id,
+		)
 
 		created = get_consultation(request.patient_id, consultation_id)
 		if not created:

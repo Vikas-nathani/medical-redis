@@ -47,7 +47,7 @@ Core runtime additions currently implemented:
 - request correlation IDs in response headers and logs
 - /health readiness endpoint
 - /metrics endpoint with instrumentator + explicit error counter
-- idempotency key support for POST consultation
+- backend-generated idempotency for POST consultation (no client header required)
 
 ## 3. Low Level Design
 
@@ -60,7 +60,7 @@ Core runtime additions currently implemented:
 | Patient consultations ZSET | patient:{patient_id}:consultations | Time-ordered patient timeline |
 | Complaint list | patient:{patient_id}:complaint:{complaint_slug} | Complaint-specific chain oldest to newest |
 | Complaint counter | counter:{patient_id}:{complaint_slug} | Atomic visit numbering via INCR |
-| Idempotency key | idempotency:{key} | Consultation ID replay mapping with TTL |
+| Idempotency key | idempotency:{key} | Consultation ID replay mapping (no expiry) |
 
 ### 3b. Atomic Write Pipeline
 
@@ -111,11 +111,12 @@ medical-redis/
 
 ### 3d. Key Updates Implemented
 
-- complaint_slug removed from consultation request body; backend generates slug from chief_complaint
+- complaint_slug removed from consultation request body; backend generates slug from chief_complaints[0]
 - complaint read endpoints switched to complaint query parameter
 - consultation write made atomic via Redis Lua + INCR
 - follow_up_history capped to avoid unbounded embedded growth
-- list APIs return total_count and support pagination
+- consultation APIs now use rich nested schema (vitals, key questions, diagnoses, investigations, medications, procedures, notes)
+- list APIs support pagination via limit/offset query params and return consultation arrays
 - Redis exceptions mapped to HTTP 503/504/500 centrally
 - JSON structured logging added
 - request_id middleware added with X-Request-ID response header
@@ -123,7 +124,9 @@ medical-redis/
 - /metrics endpoint added and explicit http_request_errors_total counter added
 - Redis timeout settings enabled in connection pool
 - docker-compose configured for Redis AOF persistence
-- idempotency support added for POST /api/v1/consultation with 24h TTL replay key
+- idempotency key generated on backend using sha256(patient_id:complaint_slug:visit_date:doctor_id)
+- idempotency key persistence has no TTL (stored until manually deleted)
+- replay-path normalization added to coerce malformed empty list fields ({} -> [])
 - comprehensive pytest suite added for endpoints, failures, and concurrency
 
 ## 4. API Endpoints
@@ -134,8 +137,8 @@ medical-redis/
 |---|---|---|
 | POST | /api/v1/patient | Register patient |
 | GET | /api/v1/patient/{patient_id} | Get patient |
-| POST | /api/v1/consultation | Create consultation (supports Idempotency-Key header) |
-| GET | /api/v1/patient/{patient_id}/consultations | Get all consultations (pagination) |
+| POST | /api/v1/consultation | Create consultation (backend idempotency, no header) |
+| GET | /api/v1/patient/{patient_id}/consultations | Get all consultations (limit/offset pagination) |
 | GET | /api/v1/patient/{patient_id}/complaint | Get complaint chain by complaint query param |
 | GET | /api/v1/patient/{patient_id}/complaint/latest | Get latest complaint consultation by complaint query param |
 | GET | /health | Redis readiness endpoint |
@@ -149,31 +152,49 @@ POST /api/v1/consultation body:
 ```json
 {
   "patient_id": "P001",
-  "chief_complaint": "High Fever",
-  "visit_date": "",
   "doctor_id": "D01",
-  "questions": "Since when is fever present?",
-  "symptoms_observed": "Fever with chills",
-  "medications": "Paracetamol 500mg",
-  "follow_up_date": "2026-04-05",
-  "follow_up_instruction": "Hydrate and rest"
+  "visit_date": "2026-04-03",
+  "chief_complaints": ["High Fever"],
+  "vitals": {
+    "height_cm": 170,
+    "weight_kg": 65,
+    "head_circ_cm": 54,
+    "temp_celsius": 101,
+    "bp_mmhg": "120/80"
+  },
+  "key_questions": [
+    {"question": "Fever since?", "answer": "3 days"}
+  ],
+  "key_questions_ai_notes": "Gradual onset fever",
+  "diagnoses": [
+    {"name": "Viral URI", "selected": true, "is_custom": false}
+  ],
+  "diagnoses_ai_notes": "Likely viral",
+  "investigations": [],
+  "investigations_ai_notes": "",
+  "medications": [
+    {"name": "Paracetamol", "selected": true, "is_custom": false}
+  ],
+  "medications_ai_notes": "Symptomatic treatment",
+  "procedures": [],
+  "procedures_ai_notes": "",
+  "advice": "Rest and hydration",
+  "follow_up_date": "2026-04-10",
+  "advice_ai_notes": "Review in 7 days"
 }
 ```
 
-Optional header:
-
-- Idempotency-Key: <unique_key>
-
 Response behavior:
 
-- first request with key: HTTP 201
-- replay with same key: HTTP 200 with same consultation_id in message
+- first request for a computed idempotency key: HTTP 201
+- replay of same payload dimensions (patient_id + complaint_slug + visit_date + doctor_id): HTTP 200
+- both responses return full ConsultationResponse payload
 
 ### Validation Rules
 
-- chief_complaint must be at least 3 characters after trim
-- visit_date must be YYYY-MM-DD (empty defaults to today)
-- follow_up_date must be YYYY-MM-DD
+- chief_complaints must contain at least one complaint, each at least 3 characters
+- visit_date must be YYYY-MM-DD if provided
+- follow_up_date must be YYYY-MM-DD if provided
 - generated complaint slug must be non-empty and valid
 
 ## 5. Error Responses
@@ -250,22 +271,30 @@ curl -X POST http://localhost:8000/api/v1/patient \
   }'
 ```
 
-### 7.2 Create Consultation With Idempotency-Key
+### 7.2 Create Consultation (No Idempotency Header Needed)
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/consultation \
   -H "Content-Type: application/json" \
-  -H "Idempotency-Key: consult-001" \
   -d '{
     "patient_id": "P001",
-    "chief_complaint": "High Fever",
-    "visit_date": "",
     "doctor_id": "D01",
-    "questions": "Any chills?",
-    "symptoms_observed": "Fever and chills",
-    "medications": "Paracetamol",
+    "visit_date": "2026-04-03",
+    "chief_complaints": ["High Fever"],
+    "vitals": null,
+    "key_questions": [],
+    "key_questions_ai_notes": "",
+    "diagnoses": [],
+    "diagnoses_ai_notes": "",
+    "investigations": [],
+    "investigations_ai_notes": "",
+    "medications": [],
+    "medications_ai_notes": "",
+    "procedures": [],
+    "procedures_ai_notes": "",
+    "advice": "Hydrate",
     "follow_up_date": "2026-04-05",
-    "follow_up_instruction": "Hydrate"
+    "advice_ai_notes": ""
   }'
 ```
 
@@ -294,7 +323,7 @@ Test files:
 
 - tests/test_write.py (existing integration-style write test)
 - tests/conftest.py (shared fixtures)
-- tests/test_endpoints.py (endpoint success/error/idempotency/headers/metrics checks)
+- tests/test_endpoints.py (endpoint success/error/idempotency/metrics checks)
 - tests/test_concurrency.py (20-thread consultation stress test)
 - tests/test_failures.py (Redis failure simulations with mocks)
 
@@ -316,12 +345,13 @@ python3 -m pytest -q tests/test_concurrency.py
 |---|---|
 | Atomic consultation write | DONE |
 | Query-based complaint endpoints | DONE |
-| Pagination and total_count | DONE |
+| Pagination via limit/offset | DONE |
 | Redis timeout handling | DONE |
 | Structured logging + request correlation IDs | DONE |
 | Health and metrics endpoints | DONE |
 | Redis AOF persistence via docker compose | DONE |
-| Idempotency for consultation POST | DONE |
+| Backend-generated idempotency for consultation POST | DONE |
+| Replay list-field normalization ({} -> []) | DONE |
 | Authentication/authorization | PENDING |
 | Production process manager + multi-worker strategy | PENDING |
 
@@ -350,7 +380,9 @@ Recent updates captured in this README:
 - Added request-id middleware and X-Request-ID response header
 - Added explicit Prometheus error counter http_request_errors_total(method, path, status)
 - Added /health readiness and /metrics observability endpoints
-- Added idempotency behavior for POST /api/v1/consultation
+- Added backend-generated idempotency behavior for POST /api/v1/consultation (no request header)
+- Changed idempotency mapping persistence to no TTL
+- Hardened consultation/follow_up_history list normalization for malformed empty values
 - Added Redis timeouts in connection pool configuration
 - Added docker-compose Redis AOF persistence configuration
 - Reworked complaint retrieval APIs to use complaint query parameter
@@ -364,3 +396,4 @@ Recent updates captured in this README:
 | 2026-04-02 | v1.2.0 | Switched complaint retrieval endpoints to complaint query params and backend slug generation flow. |
 | 2026-04-02 | v1.3.0 | Added Redis timeouts, docker-compose AOF persistence, consultation idempotency support, request correlation IDs, /health endpoint, and /metrics endpoint with explicit http_request_errors_total counter. |
 | 2026-04-02 | v1.4.0 | Added comprehensive pytest suite with shared fixtures, endpoint coverage, Redis failure mocks, and threading-based concurrency stress tests. |
+| 2026-04-03 | v1.5.0 | Migrated to rich nested consultation payloads and responses, moved idempotency key generation to backend with no TTL, removed client Idempotency-Key header requirement, and added replay/list-field normalization safeguards for empty JSON list fields. |
