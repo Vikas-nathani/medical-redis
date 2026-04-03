@@ -12,7 +12,6 @@ from pipeline.write import complaint_list_key, consultation_key, global_zset_key
 
 SAMPLE_CONSULTATION = {
 	"patient_id": "P001",
-	"doctor_id": "D01",
 	"visit_date": "2026-04-03",
 	"chief_complaints": ["High Fever"],
 	"vitals": {

@@ -58,7 +58,6 @@ def _decode_history_entry(entry: dict[str, object]) -> dict[str, object]:
 	for text_field in [
 		"consultation_id",
 		"visit_date",
-		"doctor_id",
 		"key_questions_ai_notes",
 		"diagnoses_ai_notes",
 		"investigations_ai_notes",
@@ -96,7 +95,6 @@ def _decode_consultation(data: dict[str, str]) -> dict[str, object]:
 	return {
 		"consultation_id": data.get("consultation_id", ""),
 		"patient_id": data.get("patient_id", ""),
-		"doctor_id": data.get("doctor_id", ""),
 		"visit_date": data.get("visit_date", ""),
 		"visit_number": visit_number,
 		"chief_complaints": ensure_list(_load_json(data.get("chief_complaints", "[]") or "[]", [])),

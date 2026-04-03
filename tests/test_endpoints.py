@@ -76,7 +76,7 @@ def test_store_consultation_for_nonexistent_patient_returns_404(client: TestClie
 # Proves schema validation rejects missing required consultation fields with HTTP 422.
 def test_store_consultation_with_missing_required_field_returns_422(client: TestClient, sample_consultation_payload: dict[str, object]) -> None:
 	payload = dict(sample_consultation_payload)
-	del payload["doctor_id"]
+	del payload["patient_id"]
 	response = _create_consultation(client, payload)
 	assert response.status_code == 422
 
@@ -214,7 +214,6 @@ def test_get_latest_consultation_for_complaint_returns_200_and_embedded_full_his
 	assert len(body["follow_up_history"]) == 1
 	first_snapshot = body["follow_up_history"][0]
 	assert first_snapshot["consultation_id"] == first.json()["consultation_id"]
-	assert first_snapshot["doctor_id"] == sample_consultation_payload["doctor_id"]
 	assert isinstance(first_snapshot["chief_complaints"], list)
 	assert isinstance(first_snapshot["vitals"], dict)
 	assert isinstance(first_snapshot["key_questions"], list)

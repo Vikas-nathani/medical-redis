@@ -58,7 +58,6 @@ def run() -> None:
 
 	fever_visit_1 = ConsultationModel(
 		patient_id=patient_id,
-		doctor_id="dr_sen",
 		visit_date="2026-04-01",
 		chief_complaints=["Fever"],
 		vitals={"height_cm": 170, "weight_kg": 65, "temp_celsius": 101, "bp_mmhg": "120/80"},
@@ -80,7 +79,6 @@ def run() -> None:
 
 	fever_visit_2 = ConsultationModel(
 		patient_id=patient_id,
-		doctor_id="dr_sen",
 		visit_date="2026-04-02",
 		chief_complaints=["Fever"],
 		vitals={"height_cm": 170, "weight_kg": 65, "temp_celsius": 99.8, "bp_mmhg": "118/78"},
@@ -102,7 +100,6 @@ def run() -> None:
 
 	back_pain_visit_1 = ConsultationModel(
 		patient_id=patient_id,
-		doctor_id="dr_rao",
 		visit_date="2026-04-02",
 		chief_complaints=["Back pain"],
 		vitals=None,

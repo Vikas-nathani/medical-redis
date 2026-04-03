@@ -25,26 +25,25 @@ local global_zset = KEYS[2]
 
 local patient_id = ARGV[1]
 local complaint_slug = ARGV[2]
-local doctor_id = ARGV[3]
-local visit_date = ARGV[4]
-local chief_complaints_json = ARGV[5]
-local vitals_json = ARGV[6]
-local key_questions_json = ARGV[7]
-local key_questions_ai_notes = ARGV[8]
-local diagnoses_json = ARGV[9]
-local diagnoses_ai_notes = ARGV[10]
-local investigations_json = ARGV[11]
-local investigations_ai_notes = ARGV[12]
-local medications_json = ARGV[13]
-local medications_ai_notes = ARGV[14]
-local procedures_json = ARGV[15]
-local procedures_ai_notes = ARGV[16]
-local advice = ARGV[17]
-local follow_up_date = ARGV[18]
-local advice_ai_notes = ARGV[19]
-local timestamp_score = tonumber(ARGV[20])
-local created_at = ARGV[21]
-local max_history_snapshots = tonumber(ARGV[22])
+local visit_date = ARGV[3]
+local chief_complaints_json = ARGV[4]
+local vitals_json = ARGV[5]
+local key_questions_json = ARGV[6]
+local key_questions_ai_notes = ARGV[7]
+local diagnoses_json = ARGV[8]
+local diagnoses_ai_notes = ARGV[9]
+local investigations_json = ARGV[10]
+local investigations_ai_notes = ARGV[11]
+local medications_json = ARGV[12]
+local medications_ai_notes = ARGV[13]
+local procedures_json = ARGV[14]
+local procedures_ai_notes = ARGV[15]
+local advice = ARGV[16]
+local follow_up_date = ARGV[17]
+local advice_ai_notes = ARGV[18]
+local timestamp_score = tonumber(ARGV[19])
+local created_at = ARGV[20]
+local max_history_snapshots = tonumber(ARGV[21])
 
 local function decode_json_array(raw)
 	if not raw or raw == "" then
@@ -97,7 +96,6 @@ if previous_consultation_id ~= "" then
 			consultation_id = previous_map["consultation_id"] or previous_consultation_id,
 			visit_number = tonumber(previous_map["visit_number"] or "0"),
 			visit_date = previous_map["visit_date"] or "",
-			doctor_id = previous_map["doctor_id"] or "",
 			chief_complaints = decode_json_array(previous_map["chief_complaints"] or "[]"),
 			vitals = decode_json_object(previous_map["vitals"] or "null"),
 			key_questions = decode_json_array(previous_map["key_questions"] or "[]"),
@@ -137,7 +135,6 @@ redis.call(
 	consultation_hash_key,
 	"consultation_id", consultation_id,
 	"patient_id", patient_id,
-	"doctor_id", doctor_id,
 	"visit_date", visit_date,
 	"visit_number", tostring(visit_num),
 	"chief_complaints", chief_complaints_json,
@@ -197,8 +194,8 @@ def generate_slug(text: str) -> str:
 	return text.strip("-")
 
 
-def generate_idempotency_key(patient_id: str, complaint_slug: str, visit_date: str, doctor_id: str) -> str:
-	raw = f"{patient_id}:{complaint_slug}:{visit_date}:{doctor_id}"
+def generate_idempotency_key(patient_id: str, complaint_slug: str, visit_date: str) -> str:
+	raw = f"{patient_id}:{complaint_slug}:{visit_date}"
 	return hashlib.sha256(raw.encode()).hexdigest()
 
 
@@ -275,7 +272,6 @@ def write_consultation(consultation: ConsultationModel) -> str:
 			args=[
 				consultation.patient_id,
 				complaint_slug,
-				consultation.doctor_id,
 				visit_date,
 				safe_json_list(consultation.chief_complaints),
 				json.dumps(consultation.vitals),
@@ -316,10 +312,10 @@ def write_consultation(consultation: ConsultationModel) -> str:
 		raise
 
 
-def get_idempotency_consultation_id(patient_id: str, complaint_slug: str, visit_date: str, doctor_id: str) -> str | None:
+def get_idempotency_consultation_id(patient_id: str, complaint_slug: str, visit_date: str) -> str | None:
 	try:
 		client = get_redis_client()
-		idempotency_key = generate_idempotency_key(patient_id, complaint_slug, visit_date, doctor_id)
+		idempotency_key = generate_idempotency_key(patient_id, complaint_slug, visit_date)
 		value = client.get(f"idempotency:{idempotency_key}")
 		return str(value) if value else None
 	except Exception as exc:
@@ -327,10 +323,10 @@ def get_idempotency_consultation_id(patient_id: str, complaint_slug: str, visit_
 		raise
 
 
-def set_idempotency_consultation_id(patient_id: str, complaint_slug: str, visit_date: str, doctor_id: str, consultation_id: str) -> None:
+def set_idempotency_consultation_id(patient_id: str, complaint_slug: str, visit_date: str, consultation_id: str) -> None:
 	try:
 		client = get_redis_client()
-		idempotency_key = generate_idempotency_key(patient_id, complaint_slug, visit_date, doctor_id)
+		idempotency_key = generate_idempotency_key(patient_id, complaint_slug, visit_date)
 		client.set(f"idempotency:{idempotency_key}", consultation_id)
 	except Exception as exc:
 		handle_redis_error(exc, "set_idempotency_consultation_id")

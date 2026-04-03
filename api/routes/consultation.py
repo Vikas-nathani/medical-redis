@@ -65,7 +65,6 @@ def create_consultation(
 			request.patient_id,
 			complaint_slug,
 			visit_date,
-			request.doctor_id,
 		)
 		if existing_consultation_id:
 			existing = get_consultation(request.patient_id, existing_consultation_id)
@@ -91,7 +90,6 @@ def create_consultation(
 		consultation = ConsultationModel(
 			consultation_id="",
 			patient_id=request.patient_id,
-			doctor_id=request.doctor_id,
 			visit_date=visit_date,
 			visit_number=0,
 			chief_complaints=request.chief_complaints,
@@ -117,7 +115,6 @@ def create_consultation(
 			request.patient_id,
 			complaint_slug,
 			visit_date,
-			request.doctor_id,
 			consultation_id,
 		)
 

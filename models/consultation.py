@@ -53,7 +53,6 @@ class ProcedureItemModel:
 class ConsultationModel:
 	consultation_id: str = ""
 	patient_id: str = ""
-	doctor_id: str = ""
 	visit_date: str = ""
 	visit_number: int = 1
 	chief_complaints: list = field(default_factory=list)

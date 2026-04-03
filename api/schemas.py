@@ -69,8 +69,9 @@ class ProcedureItemSchema(BaseModel):
 
 
 class ConsultationRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     patient_id: str
-    doctor_id: str
     visit_date: Optional[str] = ""
 
     chief_complaints: list[str]
@@ -122,7 +123,6 @@ class FollowUpHistoryEntrySchema(BaseModel):
     consultation_id: str
     visit_number: int
     visit_date: str
-    doctor_id: str
     chief_complaints: list[str] = []
     vitals: Optional[VitalsSchema] = None
     key_questions: list[KeyQuestionSchema] = []
@@ -145,7 +145,6 @@ class ConsultationResponse(BaseModel):
 
     consultation_id: str
     patient_id: str
-    doctor_id: str
     visit_date: str
     visit_number: int
     chief_complaints: list[str] = []

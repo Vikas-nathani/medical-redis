@@ -124,7 +124,7 @@ medical-redis/
 - /metrics endpoint added and explicit http_request_errors_total counter added
 - Redis timeout settings enabled in connection pool
 - docker-compose configured for Redis AOF persistence
-- idempotency key generated on backend using sha256(patient_id:complaint_slug:visit_date:doctor_id)
+- idempotency key generated on backend using sha256(patient_id:complaint_slug:visit_date)
 - idempotency key persistence has no TTL (stored until manually deleted)
 - replay-path normalization added to coerce malformed empty list fields ({} -> [])
 - comprehensive pytest suite added for endpoints, failures, and concurrency
@@ -152,7 +152,6 @@ POST /api/v1/consultation body:
 ```json
 {
   "patient_id": "P001",
-  "doctor_id": "D01",
   "visit_date": "2026-04-03",
   "chief_complaints": ["High Fever"],
   "vitals": {
@@ -187,7 +186,7 @@ POST /api/v1/consultation body:
 Response behavior:
 
 - first request for a computed idempotency key: HTTP 201
-- replay of same payload dimensions (patient_id + complaint_slug + visit_date + doctor_id): HTTP 200
+- replay of same payload dimensions (patient_id + complaint_slug + visit_date): HTTP 200
 - both responses return full ConsultationResponse payload
 
 ### Validation Rules
@@ -278,7 +277,6 @@ curl -X POST http://localhost:8000/api/v1/consultation \
   -H "Content-Type: application/json" \
   -d '{
     "patient_id": "P001",
-    "doctor_id": "D01",
     "visit_date": "2026-04-03",
     "chief_complaints": ["High Fever"],
     "vitals": null,
