@@ -3,16 +3,18 @@
 from __future__ import annotations
 
 import json
+import re
 import time
+from datetime import date
 
 from api.exceptions import handle_redis_error
 from core.logging import get_logger
 from db.connection import get_redis_client
-from models.consultation import Consultation
+from models.consultation import ConsultationModel
 from models.patient import Patient
 
 
-MAX_HISTORY_SNAPSHOTS = 10  # Cap embedded history so consultation payloads do not grow without bound.
+MAX_HISTORY_SNAPSHOTS = 10
 logger = get_logger(__name__)
 
 
@@ -22,20 +24,52 @@ local global_zset = KEYS[2]
 
 local patient_id = ARGV[1]
 local complaint_slug = ARGV[2]
-local chief_complaint = ARGV[3]
+local doctor_id = ARGV[3]
 local visit_date = ARGV[4]
-local doctor_id = ARGV[5]
-local questions = ARGV[6]
-local symptoms_observed = ARGV[7]
-local medications = ARGV[8]
-local follow_up_date = ARGV[9]
-local follow_up_instruction = ARGV[10]
-local timestamp_score = tonumber(ARGV[11])
-local max_history_snapshots = tonumber(ARGV[12])
+local chief_complaints_json = ARGV[5]
+local vitals_json = ARGV[6]
+local key_questions_json = ARGV[7]
+local key_questions_ai_notes = ARGV[8]
+local diagnoses_json = ARGV[9]
+local diagnoses_ai_notes = ARGV[10]
+local investigations_json = ARGV[11]
+local investigations_ai_notes = ARGV[12]
+local medications_json = ARGV[13]
+local medications_ai_notes = ARGV[14]
+local procedures_json = ARGV[15]
+local procedures_ai_notes = ARGV[16]
+local advice = ARGV[17]
+local follow_up_date = ARGV[18]
+local advice_ai_notes = ARGV[19]
+local timestamp_score = tonumber(ARGV[20])
+local created_at = ARGV[21]
+local max_history_snapshots = tonumber(ARGV[22])
+
+local function decode_json_array(raw)
+	if not raw or raw == "" then
+		return {}
+	end
+	local ok, decoded = pcall(cjson.decode, raw)
+	if ok and type(decoded) == "table" then
+		return decoded
+	end
+	return {}
+end
+
+local function decode_json_object(raw)
+	if not raw or raw == "" or raw == "null" then
+		return nil
+	end
+	local ok, decoded = pcall(cjson.decode, raw)
+	if ok and type(decoded) == "table" then
+		return decoded
+	end
+	return nil
+end
 
 local counter_key = "counter:" .. patient_id .. ":" .. complaint_slug
 local visit_num = redis.call("INCR", counter_key)
-local consultation_id = string.format("cons_%s_%03d", complaint_slug, visit_num)
+local consultation_id = patient_id .. "-" .. complaint_slug .. "-" .. tostring(visit_num)
 local consultation_hash_key = "consultation:" .. patient_id .. ":" .. consultation_id
 
 local previous_consultation_id = redis.call("LINDEX", complaint_key, -1)
@@ -53,20 +87,9 @@ if previous_consultation_id ~= "" then
 			previous_map[previous_hash_raw[i]] = previous_hash_raw[i + 1]
 		end
 
-		local previous_history_raw = previous_map["follow_up_history"] or "[]"
-		local ok, previous_history = pcall(cjson.decode, previous_history_raw)
-		if ok and type(previous_history) == "table" then
-			local keep_count = max_history_snapshots - 1
-			if keep_count < 0 then
-				keep_count = 0
-			end
-			local start_index = 1
-			if #previous_history > keep_count then
-				start_index = #previous_history - keep_count + 1
-			end
-			for i = start_index, #previous_history do
-				table.insert(follow_up_history, previous_history[i])
-			end
+		local previous_history = decode_json_array(previous_map["follow_up_history"] or "[]")
+		for i = 1, #previous_history do
+			table.insert(follow_up_history, previous_history[i])
 		end
 
 		local previous_snapshot = {
@@ -74,17 +97,36 @@ if previous_consultation_id ~= "" then
 			visit_number = tonumber(previous_map["visit_number"] or "0"),
 			visit_date = previous_map["visit_date"] or "",
 			doctor_id = previous_map["doctor_id"] or "",
-			questions = previous_map["questions"] or "",
-			symptoms_observed = previous_map["symptoms_observed"] or "",
-			medications = previous_map["medications"] or "",
+			chief_complaints = decode_json_array(previous_map["chief_complaints"] or "[]"),
+			vitals = decode_json_object(previous_map["vitals"] or "null"),
+			key_questions = decode_json_array(previous_map["key_questions"] or "[]"),
+			key_questions_ai_notes = previous_map["key_questions_ai_notes"] or "",
+			diagnoses = decode_json_array(previous_map["diagnoses"] or "[]"),
+			diagnoses_ai_notes = previous_map["diagnoses_ai_notes"] or "",
+			investigations = decode_json_array(previous_map["investigations"] or "[]"),
+			investigations_ai_notes = previous_map["investigations_ai_notes"] or "",
+			medications = decode_json_array(previous_map["medications"] or "[]"),
+			medications_ai_notes = previous_map["medications_ai_notes"] or "",
+			procedures = decode_json_array(previous_map["procedures"] or "[]"),
+			procedures_ai_notes = previous_map["procedures_ai_notes"] or "",
+			advice = previous_map["advice"] or "",
 			follow_up_date = previous_map["follow_up_date"] or "",
-			follow_up_instruction = previous_map["follow_up_instruction"] or ""
+			advice_ai_notes = previous_map["advice_ai_notes"] or ""
 		}
 		table.insert(follow_up_history, previous_snapshot)
 	end
 end
 
-local follow_up_history_json = "[]"  -- Preserve JSON array shape for first visits.
+if max_history_snapshots > 0 and #follow_up_history > max_history_snapshots then
+	local start_index = #follow_up_history - max_history_snapshots + 1
+	local trimmed = {}
+	for i = start_index, #follow_up_history do
+		table.insert(trimmed, follow_up_history[i])
+	end
+	follow_up_history = trimmed
+end
+
+local follow_up_history_json = "[]"
 if #follow_up_history > 0 then
 	follow_up_history_json = cjson.encode(follow_up_history)
 end
@@ -94,18 +136,26 @@ redis.call(
 	consultation_hash_key,
 	"consultation_id", consultation_id,
 	"patient_id", patient_id,
-	"chief_complaint", chief_complaint,
-	"complaint_slug", complaint_slug,
-	"visit_number", tostring(visit_num),
-	"visit_date", visit_date,
 	"doctor_id", doctor_id,
-	"questions", questions,
-	"symptoms_observed", symptoms_observed,
-	"medications", medications,
+	"visit_date", visit_date,
+	"visit_number", tostring(visit_num),
+	"chief_complaints", chief_complaints_json,
+	"vitals", vitals_json,
+	"key_questions", key_questions_json,
+	"key_questions_ai_notes", key_questions_ai_notes,
+	"diagnoses", diagnoses_json,
+	"diagnoses_ai_notes", diagnoses_ai_notes,
+	"investigations", investigations_json,
+	"investigations_ai_notes", investigations_ai_notes,
+	"medications", medications_json,
+	"medications_ai_notes", medications_ai_notes,
+	"procedures", procedures_json,
+	"procedures_ai_notes", procedures_ai_notes,
+	"advice", advice,
 	"follow_up_date", follow_up_date,
-	"follow_up_instruction", follow_up_instruction,
-	"prev_consultation_id", previous_consultation_id,
-	"follow_up_history", follow_up_history_json
+	"advice_ai_notes", advice_ai_notes,
+	"follow_up_history", follow_up_history_json,
+	"created_at", created_at
 )
 
 redis.call("ZADD", global_zset, timestamp_score, consultation_id)
@@ -114,13 +164,12 @@ redis.call("RPUSH", complaint_key, consultation_id)
 return cjson.encode({
 	consultation_id = consultation_id,
 	visit_number = visit_num,
-	prev_consultation_id = previous_consultation_id,
 	follow_up_history = follow_up_history
 })
 """
 
-_redis_client = get_redis_client()  # Load the Lua script once so Redis can cache it by SHA for reuse.
-_atomic_write_script = _redis_client.register_script(ATOMIC_CONSULTATION_WRITE_LUA)  # Use a registered script handle instead of per-call EVAL.
+_redis_client = get_redis_client()
+_atomic_write_script = _redis_client.register_script(ATOMIC_CONSULTATION_WRITE_LUA)
 
 
 def patient_key(patient_id: str) -> str:
@@ -137,6 +186,14 @@ def global_zset_key(patient_id: str) -> str:
 
 def complaint_list_key(patient_id: str, complaint_slug: str) -> str:
 	return f"patient:{patient_id}:complaint:{complaint_slug}"
+
+
+def generate_slug(text: str) -> str:
+	text = text.lower().strip()
+	text = re.sub(r"[^a-z0-9\s]", "", text)
+	text = re.sub(r"\s+", "-", text)
+	text = re.sub(r"-+", "-", text)
+	return text.strip("-")
 
 
 def write_patient(patient: Patient) -> None:
@@ -157,37 +214,56 @@ def write_patient(patient: Patient) -> None:
 			extra={"operation": "patient_register", "patient_id": patient.patient_id},
 		)
 	except Exception as exc:
-		handle_redis_error(exc, "write_patient")  # Convert Redis failures into HTTP errors at the API boundary.
+		handle_redis_error(exc, "write_patient")
 
 
-def write_consultation(consultation: Consultation) -> str:
+def write_consultation(consultation: ConsultationModel) -> str:
 	try:
-		timestamp_score = int(time.time() * 1_000_000)  # Use microseconds so ZSET ordering stays stable during bursts.
+		complaints = consultation.chief_complaints or []
+		if not complaints:
+			raise ValueError("At least one chief complaint is required")
 
-		result_raw = _atomic_write_script(  # Call the pre-registered Lua script by SHA instead of ad hoc EVAL.
+		complaint_slug = generate_slug(str(complaints[0]))
+		if not complaint_slug:
+			raise ValueError("chief_complaints[0] produced an invalid slug")
+
+		timestamp_score = int(time.time() * 1_000_000)
+		created_at = date.today().isoformat()
+		visit_date = consultation.visit_date or ""
+
+		result_raw = _atomic_write_script(
 			keys=[
-				complaint_list_key(consultation.patient_id, consultation.complaint_slug),
+				complaint_list_key(consultation.patient_id, complaint_slug),
 				global_zset_key(consultation.patient_id),
 			],
 			args=[
 				consultation.patient_id,
-				consultation.complaint_slug,
-				consultation.chief_complaint,
-				consultation.visit_date,
+				complaint_slug,
 				consultation.doctor_id,
-				consultation.questions,
-				consultation.symptoms_observed,
-				consultation.medications,
-				consultation.follow_up_date,
-				consultation.follow_up_instruction,
+				visit_date,
+				json.dumps(consultation.chief_complaints or []),
+				json.dumps(consultation.vitals),
+				json.dumps(consultation.key_questions or []),
+				consultation.key_questions_ai_notes or "",
+				json.dumps(consultation.diagnoses or []),
+				consultation.diagnoses_ai_notes or "",
+				json.dumps(consultation.investigations or []),
+				consultation.investigations_ai_notes or "",
+				json.dumps(consultation.medications or []),
+				consultation.medications_ai_notes or "",
+				json.dumps(consultation.procedures or []),
+				consultation.procedures_ai_notes or "",
+				consultation.advice or "",
+				consultation.follow_up_date or "",
+				consultation.advice_ai_notes or "",
 				str(timestamp_score),
+				created_at,
 				str(MAX_HISTORY_SNAPSHOTS),
 			],
 		)
 		result = json.loads(result_raw)
 		consultation.consultation_id = str(result["consultation_id"])
 		consultation.visit_number = int(result["visit_number"])
-		consultation.prev_consultation_id = str(result.get("prev_consultation_id", ""))
 		consultation.follow_up_history = list(result.get("follow_up_history", []))
 
 		logger.info(
@@ -200,7 +276,7 @@ def write_consultation(consultation: Consultation) -> str:
 		)
 		return consultation.consultation_id
 	except Exception as exc:
-		handle_redis_error(exc, "write_consultation")  # Surface Redis-side failures as HTTP errors instead of generic 500s.
+		handle_redis_error(exc, "write_consultation")
 		raise
 
 

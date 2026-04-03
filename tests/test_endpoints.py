@@ -1,18 +1,11 @@
 from __future__ import annotations
 
-import re
 import uuid
 
 from fastapi.testclient import TestClient
 
 
-def _extract_consultation_id(message: str) -> str:
-	match = re.search(r"(cons_[a-z0-9-]+_\d{3})", message)
-	assert match is not None
-	return match.group(1)
-
-
-def _create_consultation(client: TestClient, payload: dict[str, str], idempotency_key: str | None = None):
+def _create_consultation(client: TestClient, payload: dict[str, object], idempotency_key: str | None = None):
 	headers = {"Content-Type": "application/json"}
 	if idempotency_key:
 		headers["Idempotency-Key"] = idempotency_key
@@ -60,15 +53,23 @@ def test_get_nonexistent_patient_returns_404(client: TestClient) -> None:
 	assert response.status_code == 404
 
 
-# Proves a valid consultation can be stored and returns a consultation ID in the response.
-def test_store_valid_consultation_returns_201_and_consultation_id_in_response(client: TestClient, sample_consultation_payload: dict[str, str]) -> None:
+# Proves a valid consultation can be stored and returns the full consultation shape.
+def test_store_valid_consultation_returns_201_and_full_payload(client: TestClient, sample_consultation_payload: dict[str, object]) -> None:
 	response = _create_consultation(client, sample_consultation_payload)
 	assert response.status_code == 201
-	assert _extract_consultation_id(response.json()["message"])
+	body = response.json()
+	assert body["consultation_id"].startswith(f"{sample_consultation_payload['patient_id']}-high-fever-")
+	assert isinstance(body["chief_complaints"], list)
+	assert isinstance(body["vitals"], dict)
+	assert isinstance(body["key_questions"], list)
+	assert isinstance(body["diagnoses"], list)
+	assert isinstance(body["investigations"], list)
+	assert isinstance(body["medications"], list)
+	assert isinstance(body["procedures"], list)
 
 
 # Proves consultation creation fails with HTTP 404 when the patient does not exist.
-def test_store_consultation_for_nonexistent_patient_returns_404(client: TestClient, sample_consultation_payload: dict[str, str]) -> None:
+def test_store_consultation_for_nonexistent_patient_returns_404(client: TestClient, sample_consultation_payload: dict[str, object]) -> None:
 	payload = dict(sample_consultation_payload)
 	payload["patient_id"] = "missing-patient"
 	response = _create_consultation(client, payload)
@@ -76,23 +77,23 @@ def test_store_consultation_for_nonexistent_patient_returns_404(client: TestClie
 
 
 # Proves schema validation rejects missing required consultation fields with HTTP 422.
-def test_store_consultation_with_missing_required_field_returns_422(client: TestClient, sample_consultation_payload: dict[str, str]) -> None:
+def test_store_consultation_with_missing_required_field_returns_422(client: TestClient, sample_consultation_payload: dict[str, object]) -> None:
 	payload = dict(sample_consultation_payload)
 	del payload["doctor_id"]
 	response = _create_consultation(client, payload)
 	assert response.status_code == 422
 
 
-# Proves complaint validation rejects strings shorter than three characters.
-def test_store_consultation_with_complaint_shorter_than_three_characters_returns_422(client: TestClient, sample_consultation_payload: dict[str, str]) -> None:
+# Proves complaint validation rejects entries shorter than three characters.
+def test_store_consultation_with_complaint_shorter_than_three_characters_returns_422(client: TestClient, sample_consultation_payload: dict[str, object]) -> None:
 	payload = dict(sample_consultation_payload)
-	payload["chief_complaint"] = "ab"
+	payload["chief_complaints"] = ["ab"]
 	response = _create_consultation(client, payload)
 	assert response.status_code == 422
 
 
 # Proves date validation rejects non-ISO visit dates.
-def test_store_consultation_with_invalid_date_format_returns_422(client: TestClient, sample_consultation_payload: dict[str, str]) -> None:
+def test_store_consultation_with_invalid_date_format_returns_422(client: TestClient, sample_consultation_payload: dict[str, object]) -> None:
 	payload = dict(sample_consultation_payload)
 	payload["visit_date"] = "02-04-2026"
 	response = _create_consultation(client, payload)
@@ -100,93 +101,84 @@ def test_store_consultation_with_invalid_date_format_returns_422(client: TestCli
 
 
 # Proves complaints that collapse to an empty slug are rejected by the consultation route.
-def test_store_consultation_with_invalid_slug_from_bad_complaint_returns_422(client: TestClient, sample_consultation_payload: dict[str, str]) -> None:
+def test_store_consultation_with_invalid_slug_from_bad_complaint_returns_422(client: TestClient, sample_consultation_payload: dict[str, object]) -> None:
 	payload = dict(sample_consultation_payload)
-	payload["chief_complaint"] = "!!!"
+	payload["chief_complaints"] = ["!!!"]
 	response = _create_consultation(client, payload)
 	assert response.status_code == 422
 
 
 # Proves the same Idempotency-Key returns the same consultation ID on the second request.
-def test_post_consultation_with_same_idempotency_key_returns_same_consultation_id(client: TestClient, sample_consultation_payload: dict[str, str], unique_idempotency_key: str) -> None:
+def test_post_consultation_with_same_idempotency_key_returns_same_consultation_id(client: TestClient, sample_consultation_payload: dict[str, object], unique_idempotency_key: str) -> None:
 	first_response = _create_consultation(client, sample_consultation_payload, unique_idempotency_key)
 	second_response = _create_consultation(client, sample_consultation_payload, unique_idempotency_key)
-	first_id = _extract_consultation_id(first_response.json()["message"])
-	second_id = _extract_consultation_id(second_response.json()["message"])
+	first_id = first_response.json()["consultation_id"]
+	second_id = second_response.json()["consultation_id"]
 	assert first_response.status_code == 201
 	assert second_response.status_code == 200
 	assert first_id == second_id
 
 
 # Proves the second Idempotency-Key replay is served as a 200 response instead of a second create.
-def test_post_consultation_with_same_idempotency_key_returns_200_not_201_on_replay(client: TestClient, sample_consultation_payload: dict[str, str], unique_idempotency_key: str) -> None:
+def test_post_consultation_with_same_idempotency_key_returns_200_not_201_on_replay(client: TestClient, sample_consultation_payload: dict[str, object], unique_idempotency_key: str) -> None:
 	_ = _create_consultation(client, sample_consultation_payload, unique_idempotency_key)
 	response = _create_consultation(client, sample_consultation_payload, unique_idempotency_key)
 	assert response.status_code == 200
 
 
 # Proves consultation creation still works normally when no Idempotency-Key header is sent.
-def test_post_consultation_without_idempotency_key_returns_201(client: TestClient, sample_consultation_payload: dict[str, str]) -> None:
+def test_post_consultation_without_idempotency_key_returns_201(client: TestClient, sample_consultation_payload: dict[str, object]) -> None:
 	response = _create_consultation(client, sample_consultation_payload)
 	assert response.status_code == 201
 
 
-# Proves the all-consultations endpoint returns a list payload for an existing patient.
-def test_get_all_consultations_returns_200_and_results_list(client: TestClient, sample_consultation_payload: dict[str, str]) -> None:
-	first = _create_consultation(client, sample_consultation_payload)
+# Proves the all-consultations endpoint returns consultation objects for an existing patient.
+def test_get_all_consultations_returns_200_and_results_list(client: TestClient, sample_consultation_payload: dict[str, object]) -> None:
+	_ = _create_consultation(client, sample_consultation_payload)
 	second_payload = dict(sample_consultation_payload)
-	second_payload["questions"] = "Any improvement after the first visit?"
-	second_response = _create_consultation(client, second_payload)
+	second_payload["advice"] = "Continue hydration"
+	_ = _create_consultation(client, second_payload)
 	patient_id = sample_consultation_payload["patient_id"]
 	response = client.get(f"/api/v1/patient/{patient_id}/consultations")
 	assert response.status_code == 200
 	body = response.json()
-	assert isinstance(body["consultations"], list)
-	assert body["total_count"] == 2
-	assert _extract_consultation_id(first.json()["message"])
-	assert _extract_consultation_id(second_response.json()["message"])
+	assert isinstance(body, list)
+	assert len(body) == 2
 
 
 # Proves limit and offset paging return the expected slice of consultation history.
-def test_get_all_consultations_with_pagination_limit_and_offset_work_correctly(client: TestClient, sample_consultation_payload: dict[str, str]) -> None:
+def test_get_all_consultations_with_pagination_limit_and_offset_work_correctly(client: TestClient, sample_consultation_payload: dict[str, object]) -> None:
 	created_ids: list[str] = []
 	for index in range(3):
 		payload = dict(sample_consultation_payload)
-		payload["questions"] = f"Question batch {index}"
-		payload["follow_up_instruction"] = f"Instruction batch {index}"
+		payload["advice_ai_notes"] = f"Advice note {index}"
 		response = _create_consultation(client, payload)
-		created_ids.append(_extract_consultation_id(response.json()["message"]))
+		created_ids.append(response.json()["consultation_id"])
 	patient_id = sample_consultation_payload["patient_id"]
 	response = client.get(f"/api/v1/patient/{patient_id}/consultations", params={"limit": 2, "offset": 1})
 	assert response.status_code == 200
 	body = response.json()
-	returned_ids = [item["consultation_id"] for item in body["consultations"]]
-	assert body["total_count"] == 3
+	returned_ids = [item["consultation_id"] for item in body]
 	assert returned_ids == [created_ids[1], created_ids[0]]
 
 
 # Proves an existing complaint chain is returned in visit order with the correct records.
-def test_get_complaint_chain_for_existing_complaint_returns_200_and_correct_chain(client: TestClient, sample_consultation_payload: dict[str, str]) -> None:
+def test_get_complaint_chain_for_existing_complaint_returns_200_and_correct_chain(client: TestClient, sample_consultation_payload: dict[str, object]) -> None:
 	first = _create_consultation(client, sample_consultation_payload)
 	second_payload = dict(sample_consultation_payload)
-	second_payload["questions"] = "Any headache and chills now?"
-	second_payload["symptoms_observed"] = "Fever with chills, headache"
-	second_payload["follow_up_instruction"] = "Continue medication and hydrate well"
+	second_payload["advice"] = "Continue medication and hydrate well"
 	second = _create_consultation(client, second_payload)
 	patient_id = sample_consultation_payload["patient_id"]
 	response = client.get(f"/api/v1/patient/{patient_id}/complaint", params={"complaint": "High Fever"})
 	assert response.status_code == 200
 	body = response.json()
-	assert body["total_count"] == 2
-	returned_ids = [item["consultation_id"] for item in body["consultations"]]
-	assert returned_ids == [
-		_extract_consultation_id(first.json()["message"]),
-		_extract_consultation_id(second.json()["message"]),
-	]
+	assert len(body) == 2
+	returned_ids = [item["consultation_id"] for item in body]
+	assert returned_ids == [first.json()["consultation_id"], second.json()["consultation_id"]]
 
 
 # Proves a missing complaint chain returns HTTP 404 instead of an empty success response.
-def test_get_complaint_chain_for_nonexistent_complaint_returns_404(client: TestClient, sample_consultation_payload: dict[str, str]) -> None:
+def test_get_complaint_chain_for_nonexistent_complaint_returns_404(client: TestClient, sample_consultation_payload: dict[str, object]) -> None:
 	response = client.get(
 		f"/api/v1/patient/{sample_consultation_payload['patient_id']}/complaint",
 		params={"complaint": "Unmatched Complaint"},
@@ -195,19 +187,36 @@ def test_get_complaint_chain_for_nonexistent_complaint_returns_404(client: TestC
 
 
 # Proves the latest consultation endpoint includes prior visit history for the complaint chain.
-def test_get_latest_consultation_for_complaint_returns_200_and_embedded_history(client: TestClient, sample_consultation_payload: dict[str, str]) -> None:
+def test_get_latest_consultation_for_complaint_returns_200_and_embedded_full_history(client: TestClient, sample_consultation_payload: dict[str, object]) -> None:
 	first = _create_consultation(client, sample_consultation_payload)
 	second_payload = dict(sample_consultation_payload)
-	second_payload["questions"] = "Are the symptoms improving?"
-	second_payload["symptoms_observed"] = "Reduced fever"
+	second_payload["visit_date"] = "2026-04-10"
+	second_payload["vitals"] = {
+		"height_cm": 170,
+		"weight_kg": 65,
+		"head_circ_cm": 54,
+		"temp_celsius": 100,
+		"bp_mmhg": "118/78",
+	}
+	second_payload["key_questions"] = [{"question": "Fever since?", "answer": "3 days now"}]
+	second_payload["diagnoses"] = [{"name": "Influenza", "selected": True, "is_custom": False}]
 	second = _create_consultation(client, second_payload)
 	patient_id = sample_consultation_payload["patient_id"]
 	response = client.get(f"/api/v1/patient/{patient_id}/complaint/latest", params={"complaint": "High Fever"})
 	assert response.status_code == 200
 	body = response.json()
-	assert body["consultation_id"] == _extract_consultation_id(second.json()["message"])
-	assert body["follow_up_history"]
-	assert body["follow_up_history"][0]["consultation_id"] == _extract_consultation_id(first.json()["message"])
+	assert body["consultation_id"] == second.json()["consultation_id"]
+	assert len(body["follow_up_history"]) == 1
+	first_snapshot = body["follow_up_history"][0]
+	assert first_snapshot["consultation_id"] == first.json()["consultation_id"]
+	assert first_snapshot["doctor_id"] == sample_consultation_payload["doctor_id"]
+	assert isinstance(first_snapshot["chief_complaints"], list)
+	assert isinstance(first_snapshot["vitals"], dict)
+	assert isinstance(first_snapshot["key_questions"], list)
+	assert isinstance(first_snapshot["diagnoses"], list)
+	assert isinstance(first_snapshot["investigations"], list)
+	assert isinstance(first_snapshot["medications"], list)
+	assert isinstance(first_snapshot["procedures"], list)
 
 
 # Proves the request middleware adds an X-Request-ID header on ordinary responses.

@@ -9,7 +9,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from db.connection import get_redis_client
-from models.consultation import Consultation
+from models.consultation import ConsultationModel
 from models.patient import Patient
 from pipeline.write import (
 	complaint_list_key,
@@ -56,59 +56,71 @@ def run() -> None:
 	)
 	write_patient(patient)
 
-	fever_visit_1 = Consultation(
-		consultation_id="cons_fever_001",
+	fever_visit_1 = ConsultationModel(
 		patient_id=patient_id,
-		chief_complaint="Fever",
-		complaint_slug="fever",
-		visit_number=1,
+		doctor_id="dr_sen",
 		visit_date="2026-04-01",
-		doctor_id="dr_sen",
-		questions="Duration of fever? Any chills? Any travel history?",
-		symptoms_observed="Temperature 101.3 F, body ache, mild headache",
-		medications="Paracetamol 500 mg as needed",
+		chief_complaints=["Fever"],
+		vitals={"height_cm": 170, "weight_kg": 65, "temp_celsius": 101, "bp_mmhg": "120/80"},
+		key_questions=[{"question": "Duration?", "answer": "2 days"}],
+		key_questions_ai_notes="Initial fever assessment",
+		diagnoses=[{"name": "Viral Fever", "selected": True, "is_custom": False}],
+		diagnoses_ai_notes="Likely viral etiology",
+		investigations=[{"name": "CBC", "selected": True, "is_custom": False}],
+		investigations_ai_notes="CBC baseline",
+		medications=[{"name": "Paracetamol", "selected": True, "is_custom": False}],
+		medications_ai_notes="Symptomatic treatment",
+		procedures=[{"name": "Hydration", "selected": True, "is_custom": False}],
+		procedures_ai_notes="Hydration advised",
+		advice="Rest",
 		follow_up_date="2026-04-03",
-		follow_up_instruction="Hydrate well, monitor temperature, return if fever persists",
-		prev_consultation_id="",
-		follow_up_history=[],
+		advice_ai_notes="Review in 2 days",
 	)
-	write_consultation(fever_visit_1)
+	first_id = write_consultation(fever_visit_1)
 
-	fever_visit_2 = Consultation(
-		consultation_id="cons_fever_002",
+	fever_visit_2 = ConsultationModel(
 		patient_id=patient_id,
-		chief_complaint="Fever",
-		complaint_slug="fever",
-		visit_number=1,
-		visit_date="2026-04-02",
 		doctor_id="dr_sen",
-		questions="Any improvement since last visit? Any rash or cough?",
-		symptoms_observed="Temperature down to 99.8 F, improved body ache",
-		medications="Continue paracetamol if needed, ORS",
-		follow_up_date="2026-04-05",
-		follow_up_instruction="Continue observation, follow up if symptoms worsen",
-		prev_consultation_id="",
-		follow_up_history=[],
-	)
-	write_consultation(fever_visit_2)
-
-	back_pain_visit_1 = Consultation(
-		consultation_id="",
-		patient_id=patient_id,
-		chief_complaint="Back pain",
-		complaint_slug="back-pain",
-		visit_number=1,
 		visit_date="2026-04-02",
-		doctor_id="dr_rao",
-		questions="Is the pain radiating? Any lifting injury?",
-		symptoms_observed="Lower back tenderness, no neurological deficit",
-		medications="Ibuprofen after meals for 3 days",
-		follow_up_date="2026-04-06",
-		follow_up_instruction="Rest, use warm compress, return if numbness develops",
-		prev_consultation_id="",
-		follow_up_history=[],
+		chief_complaints=["Fever"],
+		vitals={"height_cm": 170, "weight_kg": 65, "temp_celsius": 99.8, "bp_mmhg": "118/78"},
+		key_questions=[{"question": "Improvement?", "answer": "Yes"}],
+		key_questions_ai_notes="Improving",
+		diagnoses=[{"name": "Viral Fever", "selected": True, "is_custom": False}],
+		diagnoses_ai_notes="Continue conservative management",
+		investigations=[{"name": "CBC", "selected": True, "is_custom": False}],
+		investigations_ai_notes="Stable",
+		medications=[{"name": "Paracetamol", "selected": True, "is_custom": False}],
+		medications_ai_notes="Continue",
+		procedures=[{"name": "Hydration", "selected": True, "is_custom": False}],
+		procedures_ai_notes="Continue",
+		advice="Continue rest",
+		follow_up_date="2026-04-05",
+		advice_ai_notes="Return if worse",
 	)
-	write_consultation(back_pain_visit_1)
+	second_id = write_consultation(fever_visit_2)
+
+	back_pain_visit_1 = ConsultationModel(
+		patient_id=patient_id,
+		doctor_id="dr_rao",
+		visit_date="2026-04-02",
+		chief_complaints=["Back pain"],
+		vitals=None,
+		key_questions=[{"question": "Radiating pain?", "answer": "No"}],
+		key_questions_ai_notes="Mechanical pain pattern",
+		diagnoses=[{"name": "Lumbar strain", "selected": True, "is_custom": False}],
+		diagnoses_ai_notes="Likely strain",
+		investigations=[],
+		investigations_ai_notes="",
+		medications=[{"name": "Ibuprofen", "selected": True, "is_custom": False}],
+		medications_ai_notes="After meals",
+		procedures=[{"name": "Warm compress", "selected": True, "is_custom": False}],
+		procedures_ai_notes="Conservative management",
+		advice="Rest and avoid lifting",
+		follow_up_date="2026-04-06",
+		advice_ai_notes="Return if numbness develops",
+	)
+	back_pain_id = write_consultation(back_pain_visit_1)
 
 	patient_hash = client.hgetall(patient_key(patient_id))
 	assert patient_hash, "patient:1 hash should exist"
@@ -118,15 +130,29 @@ def run() -> None:
 	assert client.llen(complaint_list_key(patient_id, "fever")) == 2
 	assert client.llen(complaint_list_key(patient_id, "back-pain")) == 1
 
-	fever_two = client.hgetall(consultation_key(patient_id, "cons_fever_002"))
-	assert fever_two, "cons_fever_002 should exist"
-	follow_up_history = fever_two["follow_up_history"]
-	assert follow_up_history != ""
-	assert len(json.loads(follow_up_history)) == 1
-	assert json.loads(follow_up_history)[0]["consultation_id"] == "cons_fever_001"
+	fever_two = client.hgetall(consultation_key(patient_id, second_id))
+	assert fever_two, "second fever consultation should exist"
+	assert json.loads(fever_two["chief_complaints"]) == ["Fever"]
+	assert isinstance(json.loads(fever_two["vitals"]), dict)
+	assert isinstance(json.loads(fever_two["key_questions"]), list)
+	assert isinstance(json.loads(fever_two["diagnoses"]), list)
+	assert isinstance(json.loads(fever_two["investigations"]), list)
+	assert isinstance(json.loads(fever_two["medications"]), list)
+	assert isinstance(json.loads(fever_two["procedures"]), list)
 
-	backpain_one = client.hgetall(consultation_key(patient_id, "cons_back-pain_001"))
-	assert backpain_one, "cons_back-pain_001 should exist"
+	follow_up_history = json.loads(fever_two["follow_up_history"])
+	assert len(follow_up_history) == 1
+	assert follow_up_history[0]["consultation_id"] == first_id
+	assert isinstance(follow_up_history[0]["chief_complaints"], list)
+	assert isinstance(follow_up_history[0]["vitals"], dict)
+	assert isinstance(follow_up_history[0]["key_questions"], list)
+	assert isinstance(follow_up_history[0]["diagnoses"], list)
+	assert isinstance(follow_up_history[0]["investigations"], list)
+	assert isinstance(follow_up_history[0]["medications"], list)
+	assert isinstance(follow_up_history[0]["procedures"], list)
+
+	backpain_one = client.hgetall(consultation_key(patient_id, back_pain_id))
+	assert backpain_one, "back-pain consultation should exist"
 	assert json.loads(backpain_one["follow_up_history"]) == []
 
 	print("[test] all assertions passed")

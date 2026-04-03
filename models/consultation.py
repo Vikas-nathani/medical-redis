@@ -1,66 +1,78 @@
-"""Consultation model and Redis serialization helpers."""
+"""Consultation model objects used by read/write pipelines."""
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
+from typing import Optional
+
 
 @dataclass
-class Consultation:
-	consultation_id: str
-	patient_id: str
-	chief_complaint: str
-	complaint_slug: str
-	visit_number: int
-	visit_date: str
-	doctor_id: str
-	questions: str
-	symptoms_observed: str
-	medications: str
-	follow_up_date: str
-	follow_up_instruction: str
-	prev_consultation_id: str
-	follow_up_history: list[dict] = field(default_factory=list)
+class VitalsModel:
+	height_cm: Optional[float] = None
+	weight_kg: Optional[float] = None
+	head_circ_cm: Optional[float] = None
+	temp_celsius: Optional[float] = None
+	bp_mmhg: Optional[str] = None
 
-	def to_redis_dict(self) -> dict[str, str]:
-		return {
-			"consultation_id": str(self.consultation_id),
-			"patient_id": str(self.patient_id),
-			"chief_complaint": str(self.chief_complaint),
-			"complaint_slug": str(self.complaint_slug),
-			"visit_number": str(self.visit_number),
-			"visit_date": str(self.visit_date),
-			"doctor_id": str(self.doctor_id),
-			"questions": str(self.questions),
-			"symptoms_observed": str(self.symptoms_observed),
-			"medications": str(self.medications),
-			"follow_up_date": str(self.follow_up_date),
-			"follow_up_instruction": str(self.follow_up_instruction),
-			"prev_consultation_id": str(self.prev_consultation_id),
-			"follow_up_history": json.dumps(self.follow_up_history),
-		}
 
-	@classmethod
-	def from_redis_dict(cls, data: dict[str, str]) -> "Consultation":
-		follow_up_history_raw = data.get("follow_up_history", "[]")
-		if follow_up_history_raw in (None, ""):
-			follow_up_history: list[dict] = []
-		else:
-			follow_up_history = json.loads(follow_up_history_raw)
+@dataclass
+class KeyQuestionModel:
+	question: str = ""
+	answer: str = ""
 
-		return cls(
-			consultation_id=data.get("consultation_id", ""),
-			patient_id=data.get("patient_id", ""),
-			chief_complaint=data.get("chief_complaint", ""),
-			complaint_slug=data.get("complaint_slug", ""),
-			visit_number=int(data.get("visit_number", 0)),
-			visit_date=data.get("visit_date", ""),
-			doctor_id=data.get("doctor_id", ""),
-			questions=data.get("questions", ""),
-			symptoms_observed=data.get("symptoms_observed", ""),
-			medications=data.get("medications", ""),
-			follow_up_date=data.get("follow_up_date", ""),
-			follow_up_instruction=data.get("follow_up_instruction", ""),
-			prev_consultation_id=data.get("prev_consultation_id", ""),
-			follow_up_history=follow_up_history,
-		)
+
+@dataclass
+class DiagnosisItemModel:
+	name: str = ""
+	selected: bool = True
+	is_custom: bool = False
+
+
+@dataclass
+class InvestigationItemModel:
+	name: str = ""
+	selected: bool = True
+	is_custom: bool = False
+
+
+@dataclass
+class MedicationItemModel:
+	name: str = ""
+	selected: bool = True
+	is_custom: bool = False
+
+
+@dataclass
+class ProcedureItemModel:
+	name: str = ""
+	selected: bool = True
+	is_custom: bool = False
+
+
+@dataclass
+class ConsultationModel:
+	consultation_id: str = ""
+	patient_id: str = ""
+	doctor_id: str = ""
+	visit_date: str = ""
+	visit_number: int = 1
+	chief_complaints: list = field(default_factory=list)
+	vitals: Optional[VitalsModel] = None
+	key_questions: list = field(default_factory=list)
+	key_questions_ai_notes: str = ""
+	diagnoses: list = field(default_factory=list)
+	diagnoses_ai_notes: str = ""
+	investigations: list = field(default_factory=list)
+	investigations_ai_notes: str = ""
+	medications: list = field(default_factory=list)
+	medications_ai_notes: str = ""
+	procedures: list = field(default_factory=list)
+	procedures_ai_notes: str = ""
+	advice: str = ""
+	follow_up_date: str = ""
+	advice_ai_notes: str = ""
+	follow_up_history: list = field(default_factory=list)
+
+
+# Backward-compatible alias for existing imports.
+Consultation = ConsultationModel

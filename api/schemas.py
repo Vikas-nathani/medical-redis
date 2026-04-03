@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import Any
+from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator
 
 
 class PatientCreateRequest(BaseModel):
@@ -16,48 +16,6 @@ class PatientCreateRequest(BaseModel):
     blood_type: str
     contact: str
     address: str
-
-
-class ConsultationCreateRequest(BaseModel):
-    patient_id: str
-    chief_complaint: str
-    visit_date: str = ""
-    doctor_id: str
-    questions: str
-    symptoms_observed: str
-    medications: str
-    follow_up_date: str
-    follow_up_instruction: str
-
-    @field_validator("chief_complaint")
-    @classmethod
-    def validate_chief_complaint(cls, value: str) -> str:
-        cleaned = value.strip()
-        if len(cleaned) < 3:
-            raise ValueError("chief_complaint must be at least 3 characters")
-        return cleaned
-
-    @field_validator("visit_date", mode="before")
-    @classmethod
-    def validate_visit_date(cls, value: str | None) -> str:
-        if value is None or (isinstance(value, str) and value.strip() == ""):
-            return date.today().isoformat()
-        if not isinstance(value, str):
-            raise ValueError("visit_date must be a string in YYYY-MM-DD format")
-        try:
-            date.fromisoformat(value)
-        except ValueError as exc:
-            raise ValueError("visit_date must be in YYYY-MM-DD format") from exc
-        return value
-
-    @field_validator("follow_up_date")
-    @classmethod
-    def validate_follow_up_date(cls, value: str) -> str:
-        try:
-            date.fromisoformat(value)
-        except ValueError as exc:
-            raise ValueError("follow_up_date must be in YYYY-MM-DD format") from exc
-        return value
 
 
 class PatientResponse(BaseModel):
@@ -73,30 +31,139 @@ class PatientResponse(BaseModel):
     created_at: str
 
 
+class VitalsSchema(BaseModel):
+    height_cm: Optional[float] = None
+    weight_kg: Optional[float] = None
+    head_circ_cm: Optional[float] = None
+    temp_celsius: Optional[float] = None
+    bp_mmhg: Optional[str] = None
+
+
+class KeyQuestionSchema(BaseModel):
+    question: str
+    answer: str
+
+
+class DiagnosisItemSchema(BaseModel):
+    name: str
+    selected: bool = True
+    is_custom: bool = False
+
+
+class InvestigationItemSchema(BaseModel):
+    name: str
+    selected: bool = True
+    is_custom: bool = False
+
+
+class MedicationItemSchema(BaseModel):
+    name: str
+    selected: bool = True
+    is_custom: bool = False
+
+
+class ProcedureItemSchema(BaseModel):
+    name: str
+    selected: bool = True
+    is_custom: bool = False
+
+
+class ConsultationRequest(BaseModel):
+    patient_id: str
+    doctor_id: str
+    visit_date: Optional[str] = ""
+
+    chief_complaints: list[str]
+
+    vitals: Optional[VitalsSchema] = None
+
+    key_questions: Optional[list[KeyQuestionSchema]] = []
+    key_questions_ai_notes: Optional[str] = ""
+
+    diagnoses: Optional[list[DiagnosisItemSchema]] = []
+    diagnoses_ai_notes: Optional[str] = ""
+
+    investigations: Optional[list[InvestigationItemSchema]] = []
+    investigations_ai_notes: Optional[str] = ""
+
+    medications: Optional[list[MedicationItemSchema]] = []
+    medications_ai_notes: Optional[str] = ""
+
+    procedures: Optional[list[ProcedureItemSchema]] = []
+    procedures_ai_notes: Optional[str] = ""
+
+    advice: Optional[str] = ""
+    follow_up_date: Optional[str] = ""
+    advice_ai_notes: Optional[str] = ""
+
+    @field_validator("chief_complaints")
+    @classmethod
+    def validate_complaints(cls, v: list[str]) -> list[str]:
+        if not v or len(v) == 0:
+            raise ValueError("At least one chief complaint is required")
+        for c in v:
+            if len(c.strip()) < 3:
+                raise ValueError(f"Each complaint must be at least 3 characters: '{c}'")
+        return v
+
+    @field_validator("visit_date", "follow_up_date", mode="before")
+    @classmethod
+    def validate_dates(cls, v: str | None) -> str:
+        if not v:
+            return ""
+        try:
+            date.fromisoformat(v)
+        except ValueError as exc:
+            raise ValueError("Date must be in YYYY-MM-DD format") from exc
+        return v
+
+
+class FollowUpHistoryEntrySchema(BaseModel):
+    consultation_id: str
+    visit_number: int
+    visit_date: str
+    doctor_id: str
+    chief_complaints: list[str] = []
+    vitals: Optional[VitalsSchema] = None
+    key_questions: list[KeyQuestionSchema] = []
+    key_questions_ai_notes: str = ""
+    diagnoses: list[DiagnosisItemSchema] = []
+    diagnoses_ai_notes: str = ""
+    investigations: list[InvestigationItemSchema] = []
+    investigations_ai_notes: str = ""
+    medications: list[MedicationItemSchema] = []
+    medications_ai_notes: str = ""
+    procedures: list[ProcedureItemSchema] = []
+    procedures_ai_notes: str = ""
+    advice: str = ""
+    follow_up_date: str = ""
+    advice_ai_notes: str = ""
+
+
 class ConsultationResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     consultation_id: str
     patient_id: str
-    chief_complaint: str
-    complaint_slug: str
-    visit_number: int
-    visit_date: str
     doctor_id: str
-    questions: str
-    symptoms_observed: str
-    medications: str
-    follow_up_date: str
-    follow_up_instruction: str
-    prev_consultation_id: str
-    follow_up_history: list[dict[str, Any]] = Field(default_factory=list)
-
-
-class ConsultationListResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    consultations: list[ConsultationResponse]
-    total_count: int
+    visit_date: str
+    visit_number: int
+    chief_complaints: list[str] = []
+    vitals: Optional[VitalsSchema] = None
+    key_questions: list[KeyQuestionSchema] = []
+    key_questions_ai_notes: str = ""
+    diagnoses: list[DiagnosisItemSchema] = []
+    diagnoses_ai_notes: str = ""
+    investigations: list[InvestigationItemSchema] = []
+    investigations_ai_notes: str = ""
+    medications: list[MedicationItemSchema] = []
+    medications_ai_notes: str = ""
+    procedures: list[ProcedureItemSchema] = []
+    procedures_ai_notes: str = ""
+    advice: str = ""
+    follow_up_date: str = ""
+    advice_ai_notes: str = ""
+    follow_up_history: list[FollowUpHistoryEntrySchema] = []
 
 
 class MessageResponse(BaseModel):
