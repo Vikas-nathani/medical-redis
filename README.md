@@ -357,7 +357,6 @@ Recent updates captured in this README:
 - Expanded automated tests with endpoint, failure, and concurrency coverage
 
 ## 13. Version History
-
 | Date | Version | Changes |
 |---|---|---|
 | 2026-04-02 | v1.0.0 | Initial FastAPI + Redis consultation backend with patient and consultation APIs, Redis data model, and Lua-based atomic consultation writes. |
