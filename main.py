@@ -14,7 +14,6 @@ from api.routes.health import router as health_router
 from api.routes.patient import router as patient_router
 from core.logging import reset_request_id, set_request_id
 
-
 app = FastAPI(title="Medical Consultation API")
 
 http_request_errors_total = Counter(
@@ -24,6 +23,14 @@ http_request_errors_total = Counter(
 )
 
 
+from fastapi.middleware.cors import CORSMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # tighten this once you know the frontend origin
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 @app.middleware("http")
 async def add_request_id(request: Request, call_next):
 	request_id = str(uuid.uuid4())
@@ -47,7 +54,6 @@ app.include_router(consultation_router, prefix="/api/v1")
 app.include_router(health_router)
 
 Instrumentator().instrument(app).expose(app, endpoint="/metrics")
-
 
 @app.get("/")
 def root() -> dict[str, str]:

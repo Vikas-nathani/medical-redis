@@ -53,12 +53,7 @@ def create_consultation(
 				detail=f"Patient {request.patient_id} not found. Create the patient first.",
 			)
 
-		complaint_slug = generate_slug(request.chief_complaints[0])
-		if complaint_slug == "":
-			raise HTTPException(
-				status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-				detail="chief_complaints[0] produced an invalid slug",
-			)
+		complaint_slug = request.complaint_chain
 
 		visit_date = request.visit_date or ""
 		existing_consultation_id = get_idempotency_consultation_id(
@@ -92,6 +87,7 @@ def create_consultation(
 			patient_id=request.patient_id,
 			visit_date=visit_date,
 			visit_number=0,
+			complaint_slug=complaint_slug,
 			chief_complaints=request.chief_complaints,
 			vitals=request.vitals.model_dump() if request.vitals else None,
 			key_questions=[item.model_dump() for item in (request.key_questions or [])],

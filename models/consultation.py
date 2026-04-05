@@ -55,6 +55,7 @@ class ConsultationModel:
 	patient_id: str = ""
 	visit_date: str = ""
 	visit_number: int = 1
+	complaint_slug: str = ""
 	chief_complaints: list = field(default_factory=list)
 	vitals: Optional[VitalsModel] = None
 	key_questions: list = field(default_factory=list)

@@ -72,6 +72,7 @@ class ConsultationRequest(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     patient_id: str
+    complaint_chain: str
     visit_date: Optional[str] = ""
 
     chief_complaints: list[str]
@@ -96,6 +97,19 @@ class ConsultationRequest(BaseModel):
     advice: Optional[str] = ""
     follow_up_date: Optional[str] = ""
     advice_ai_notes: Optional[str] = ""
+
+    @field_validator("complaint_chain")
+    @classmethod
+    def validate_complaint_chain(cls, v: str) -> str:
+        v = v.strip().lower()
+        if not v:
+            raise ValueError("complaint_chain must not be empty")
+        if " " in v:
+            raise ValueError(
+                "complaint_chain must be a slug (e.g. 'fever' or "
+                "'high-fever'), not raw text with spaces"
+            )
+        return v
 
     @field_validator("chief_complaints")
     @classmethod

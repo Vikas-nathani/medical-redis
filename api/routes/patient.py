@@ -9,7 +9,7 @@ from api.schemas import MessageResponse, PatientCreateRequest, PatientResponse
 from core.logging import get_logger
 from db.connection import get_redis_client
 from models.patient import Patient
-from pipeline.read import get_patient
+from pipeline.read import get_complaint_chains, get_patient
 from pipeline.write import patient_key, write_patient
 
 
@@ -55,4 +55,26 @@ def read_patient(patient_id: str) -> PatientResponse:
 		raise
 	except Exception as exc:
 		handle_redis_error(exc, "read_patient")
+		raise
+
+
+@router.get("/patient/{patient_id}/complaints")
+def read_complaint_chains(patient_id: str):
+	"""Return all complaint chains for a patient.
+	Used by frontend to populate the complaint selection dropdown.
+	Response: list of {chain_slug, display_name, visit_count}
+	Empty list is returned if no chains exist (not a 404).
+	"""
+	try:
+		if not get_patient(patient_id):
+			raise HTTPException(
+				status_code=status.HTTP_404_NOT_FOUND,
+				detail="Patient not found",
+			)
+		chains = get_complaint_chains(patient_id)
+		return chains
+	except HTTPException:
+		raise
+	except Exception as exc:
+		handle_redis_error(exc, "read_complaint_chains")
 		raise

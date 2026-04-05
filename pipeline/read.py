@@ -227,3 +227,31 @@ def get_latest_complaint_consultation(patient_id: str, complaint_slug: str) -> d
 
 def get_latest_consultation(patient_id: str, complaint_slug: str) -> dict[str, object] | None:
 	return get_latest_complaint_consultation(patient_id, complaint_slug)
+
+
+def get_complaint_chains(patient_id: str) -> list[dict]:
+	"""Return all complaint chains for a patient with visit counts.
+	Powers the complaint dropdown in the frontend.
+	"""
+	try:
+		client = get_redis_client()
+		pattern = f"patient:{patient_id}:complaint:*"
+		keys = client.keys(pattern)
+		prefix = f"patient:{patient_id}:complaint:"
+		results = []
+		for key in keys:
+			chain_slug = key[len(prefix):]
+			if not chain_slug:
+				continue
+			visit_count = client.llen(key)
+			display_name = chain_slug.replace("-", " ").title()
+			results.append({
+				"chain_slug": chain_slug,
+				"display_name": display_name,
+				"visit_count": visit_count,
+			})
+		results.sort(key=lambda x: x["visit_count"], reverse=True)
+		return results
+	except Exception as exc:
+		handle_redis_error(exc, "get_complaint_chains")
+		raise

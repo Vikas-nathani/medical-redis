@@ -255,9 +255,7 @@ def write_consultation(consultation: ConsultationModel) -> str:
 		if not complaints:
 			raise ValueError("At least one chief complaint is required")
 
-		complaint_slug = generate_slug(str(complaints[0]))
-		if not complaint_slug:
-			raise ValueError("chief_complaints[0] produced an invalid slug")
+		complaint_slug = consultation.complaint_slug
 
 		timestamp_score = int(time.time() * 1_000_000)
 		created_at = date.today().isoformat()
