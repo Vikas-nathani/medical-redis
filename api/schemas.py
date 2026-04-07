@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date
+import re
 from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, field_validator
@@ -104,11 +105,11 @@ class ConsultationRequest(BaseModel):
         v = v.strip().lower()
         if not v:
             raise ValueError("complaint_chain must not be empty")
-        if " " in v:
-            raise ValueError(
-                "complaint_chain must be a slug (e.g. 'fever' or "
-                "'high-fever'), not raw text with spaces"
-            )
+        v = re.sub(r"[^a-z0-9\s-]", "", v)
+        v = re.sub(r"\s+", "-", v)
+        v = re.sub(r"-+", "-", v).strip("-")
+        if not v:
+            raise ValueError("complaint_chain produced an empty slug")
         return v
 
     @field_validator("chief_complaints")

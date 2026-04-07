@@ -171,17 +171,17 @@ def read_complaint_chain(
 @router.get("/patient/{patient_id}/complaint/latest", response_model=ConsultationResponse)
 def read_latest_consultation(
 	patient_id: str,
-	complaint: str = Query(..., min_length=3),
+	complaint_chain: str = Query(..., min_length=1),
 ) -> ConsultationResponse:
 	"""Fetch the latest consultation for a complaint chain for RAG chunking."""
 	try:
-		complaint_slug = generate_slug(complaint)
+		complaint_slug = generate_slug(complaint_chain)
 		if not complaint_slug:
-			raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Complaint text produces an invalid slug")
+			raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="complaint_chain produced an invalid slug")
 
 		consultation = get_latest_complaint_consultation(patient_id, complaint_slug)
 		if not consultation:
-			raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"No consultations found for complaint: {complaint}")
+			raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"No consultations found for complaint chain: {complaint_chain}")
 		return ConsultationResponse(**consultation)
 	except HTTPException:
 		raise

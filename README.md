@@ -13,7 +13,7 @@ Medical Consultation System is a FastAPI + Redis backend for patient and consult
 The system stores patient demographics and consultation records in Redis and exposes API endpoints for:
 
 - patient registration and lookup
-- consultation creation with server-side complaint slug generation
+- consultation creation with frontend-provided complaint chain slug
 - patient timeline retrieval with pagination
 - complaint-chain retrieval and latest consultation lookup
 
@@ -111,7 +111,7 @@ medical-redis/
 
 ### 3d. Key Updates Implemented
 
-- complaint_slug removed from consultation request body; backend generates slug from chief_complaints[0]
+- complaint_chain added to consultation request body; backend uses it as the Redis complaint chain slug
 - complaint read endpoints switched to complaint query parameter
 - consultation write made atomic via Redis Lua + INCR
 - follow_up_history capped to avoid unbounded embedded growth
@@ -139,6 +139,7 @@ medical-redis/
 | GET | /api/v1/patient/{patient_id} | Get patient |
 | POST | /api/v1/consultation | Create consultation (backend idempotency, no header) |
 | GET | /api/v1/patient/{patient_id}/consultations | Get all consultations (limit/offset pagination) |
+| GET | /api/v1/patient/{patient_id}/complaints | Get all complaint chains for dropdown (chain_slug, display_name, visit_count) |
 | GET | /api/v1/patient/{patient_id}/complaint | Get complaint chain by complaint query param |
 | GET | /api/v1/patient/{patient_id}/complaint/latest | Get latest complaint consultation by complaint query param |
 | GET | /health | Redis readiness endpoint |
@@ -152,6 +153,7 @@ POST /api/v1/consultation body:
 ```json
 {
   "patient_id": "P001",
+  "complaint_chain": "fever",
   "visit_date": "2026-04-03",
   "chief_complaints": ["High Fever"],
   "vitals": {
@@ -186,15 +188,15 @@ POST /api/v1/consultation body:
 Response behavior:
 
 - first request for a computed idempotency key: HTTP 201
-- replay of same payload dimensions (patient_id + complaint_slug + visit_date): HTTP 200
+- replay of same payload dimensions (patient_id + complaint_chain + visit_date): HTTP 200
 - both responses return full ConsultationResponse payload
 
 ### Validation Rules
 
 - chief_complaints must contain at least one complaint, each at least 3 characters
+- complaint_chain must be non-empty, lowercased, and slug-style (no spaces)
 - visit_date must be YYYY-MM-DD if provided
 - follow_up_date must be YYYY-MM-DD if provided
-- generated complaint slug must be non-empty and valid
 
 ## 5. Error Responses
 
@@ -277,6 +279,7 @@ curl -X POST http://localhost:8000/api/v1/consultation \
   -H "Content-Type: application/json" \
   -d '{
     "patient_id": "P001",
+    "complaint_chain": "fever",
     "visit_date": "2026-04-03",
     "chief_complaints": ["High Fever"],
     "vitals": null,
@@ -302,13 +305,19 @@ curl -X POST http://localhost:8000/api/v1/consultation \
 curl "http://localhost:8000/api/v1/patient/P001/complaint?complaint=High%20Fever&limit=20&offset=0"
 ```
 
-### 7.4 Get Latest Consultation For Complaint
+### 7.4 Get Complaint Chains For Patient
+
+```bash
+curl "http://localhost:8000/api/v1/patient/P001/complaints"
+```
+
+### 7.5 Get Latest Consultation For Complaint
 
 ```bash
 curl "http://localhost:8000/api/v1/patient/P001/complaint/latest?complaint=High%20Fever"
 ```
 
-### 7.5 Health and Metrics
+### 7.6 Health and Metrics
 
 ```bash
 curl http://localhost:8000/health
