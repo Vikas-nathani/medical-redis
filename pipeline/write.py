@@ -194,8 +194,8 @@ def generate_slug(text: str) -> str:
 	return text.strip("-")
 
 
-def generate_idempotency_key(patient_id: str, complaint_slug: str, visit_date: str) -> str:
-	raw = f"{patient_id}:{complaint_slug}:{visit_date}"
+def generate_idempotency_key(patient_id: str, complaint_slug: str, visit_date: str,visit_number:int=0) -> str:
+	raw = f"{patient_id}:{complaint_slug}:{visit_date}:{visit_number}"
 	return hashlib.sha256(raw.encode()).hexdigest()
 
 
@@ -310,10 +310,10 @@ def write_consultation(consultation: ConsultationModel) -> str:
 		raise
 
 
-def get_idempotency_consultation_id(patient_id: str, complaint_slug: str, visit_date: str) -> str | None:
+def get_idempotency_consultation_id(patient_id: str, complaint_slug: str, visit_date: str,visit_number: int = 0) -> str | None:
 	try:
 		client = get_redis_client()
-		idempotency_key = generate_idempotency_key(patient_id, complaint_slug, visit_date)
+		idempotency_key = generate_idempotency_key(patient_id, complaint_slug, visit_date, visit_number)
 		value = client.get(f"idempotency:{idempotency_key}")
 		return str(value) if value else None
 	except Exception as exc:
@@ -321,10 +321,10 @@ def get_idempotency_consultation_id(patient_id: str, complaint_slug: str, visit_
 		raise
 
 
-def set_idempotency_consultation_id(patient_id: str, complaint_slug: str, visit_date: str, consultation_id: str) -> None:
+def set_idempotency_consultation_id(patient_id: str, complaint_slug: str, visit_date: str, consultation_id: str,visit_number: int = 0) -> None:
 	try:
 		client = get_redis_client()
-		idempotency_key = generate_idempotency_key(patient_id, complaint_slug, visit_date)
+		idempotency_key = generate_idempotency_key(patient_id, complaint_slug, visit_date, visit_number)
 		client.set(f"idempotency:{idempotency_key}", consultation_id)
 	except Exception as exc:
 		handle_redis_error(exc, "set_idempotency_consultation_id")

@@ -8,6 +8,8 @@
 
 Medical Consultation System is a FastAPI + Redis backend for patient and consultation records with concurrency-safe consultation writes, complaint-chain retrieval, readiness checks, request correlation IDs, and Prometheus metrics.
 
+
+
 ## 1. Project Description
 
 The system stores patient demographics and consultation records in Redis and exposes API endpoints for:
@@ -124,7 +126,7 @@ medical-redis/
 - /metrics endpoint added and explicit http_request_errors_total counter added
 - Redis timeout settings enabled in connection pool
 - docker-compose configured for Redis AOF persistence
-- idempotency key generated on backend using sha256(patient_id:complaint_slug:visit_date)
+- idempotency key generated on backend using sha256(patient_id:complaint_slug:visit_date:visit_number)
 - idempotency key persistence has no TTL (stored until manually deleted)
 - replay-path normalization added to coerce malformed empty list fields ({} -> [])
 - comprehensive pytest suite added for endpoints, failures, and concurrency
@@ -155,6 +157,7 @@ POST /api/v1/consultation body:
   "patient_id": "P001",
   "complaint_chain": "fever",
   "visit_date": "2026-04-03",
+  "visit_number": 1,
   "chief_complaints": ["High Fever"],
   "vitals": {
     "height_cm": 170,
@@ -188,7 +191,7 @@ POST /api/v1/consultation body:
 Response behavior:
 
 - first request for a computed idempotency key: HTTP 201
-- replay of same payload dimensions (patient_id + complaint_chain + visit_date): HTTP 200
+- replay of same payload dimensions (patient_id + complaint_chain + visit_date + visit_number): HTTP 200
 - both responses return full ConsultationResponse payload
 
 ### Validation Rules
@@ -281,6 +284,7 @@ curl -X POST http://localhost:8000/api/v1/consultation \
     "patient_id": "P001",
     "complaint_chain": "fever",
     "visit_date": "2026-04-03",
+    "visit_number": 1,
     "chief_complaints": ["High Fever"],
     "vitals": null,
     "key_questions": [],
@@ -388,6 +392,7 @@ Recent updates captured in this README:
 - Added explicit Prometheus error counter http_request_errors_total(method, path, status)
 - Added /health readiness and /metrics observability endpoints
 - Added backend-generated idempotency behavior for POST /api/v1/consultation (no request header)
+- Added visit_number-aware idempotency keying to support multiple same-day visits in a complaint chain
 - Changed idempotency mapping persistence to no TTL
 - Hardened consultation/follow_up_history list normalization for malformed empty values
 - Added Redis timeouts in connection pool configuration
@@ -404,3 +409,4 @@ Recent updates captured in this README:
 | 2026-04-02 | v1.3.0 | Added Redis timeouts, docker-compose AOF persistence, consultation idempotency support, request correlation IDs, /health endpoint, and /metrics endpoint with explicit http_request_errors_total counter. |
 | 2026-04-02 | v1.4.0 | Added comprehensive pytest suite with shared fixtures, endpoint coverage, Redis failure mocks, and threading-based concurrency stress tests. |
 | 2026-04-03 | v1.5.0 | Migrated to rich nested consultation payloads and responses, moved idempotency key generation to backend with no TTL, removed client Idempotency-Key header requirement, and added replay/list-field normalization safeguards for empty JSON list fields. |
+| 2026-04-08 | v1.6.0 | Added visit_number to consultation request schema and idempotency key generation (patient_id + complaint_chain + visit_date + visit_number) to correctly support multiple same-day visits while preserving duplicate-submit protection. |

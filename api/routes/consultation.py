@@ -60,6 +60,7 @@ def create_consultation(
 			request.patient_id,
 			complaint_slug,
 			visit_date,
+			request.visit_number,
 		)
 		if existing_consultation_id:
 			existing = get_consultation(request.patient_id, existing_consultation_id)

@@ -75,6 +75,7 @@ class ConsultationRequest(BaseModel):
     patient_id: str
     complaint_chain: str
     visit_date: Optional[str] = ""
+    visit_number: int = 0
 
     chief_complaints: list[str]
 
